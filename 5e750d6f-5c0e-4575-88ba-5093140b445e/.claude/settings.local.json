@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(/agent_workspace/5e750d6f-5c0e-4575-88ba-5093140b445e/*)",
+      "Bash(*)",
+      "Read(/agent_workspace/5e750d6f-5c0e-4575-88ba-5093140b445e/*)",
+      "Read(/app/app/knowledge/**)"
+    ]
+  }
+}
