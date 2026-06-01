@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数字华容道</title>
+    <script>
+        let board = [];
+        let emptyIdx = 15;
+        let moves = 0;
+        let seconds = 0;
+        let timerInterval = null;
+        let gameStarted = false;
+        let gameWon = false;
+
+        function initBoard() {
+            board = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0];
+            emptyIdx = 15;
+            moves = 0;
+            seconds = 0;
+            gameStarted = false;
+            gameWon = false;
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            document.getElementById('timer').textContent = '00:00';
+            document.getElementById('moves').textContent = '0';
+            document.getElementById('message').textContent = '';
+        }
+
+        function shuffleBoard() {
+            let last = -1;
+            const dirs = [-4, 4, -1, 1];
+            for (let i = 0; i < 500; i++) {
+                let valid = [];
+                for (let d of dirs) {
+                    let ni = emptyIdx + d;
+                    if (ni < 0 || ni >= 16) continue;
+                    let r1 = Math.floor(emptyIdx / 4), c1 = emptyIdx % 4;
+                    let r2 = Math.floor(ni / 4), c2 = ni % 4;
+                    if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) continue;
+                    if (last !== -1 && ni === last) continue;
+                    valid.push(ni);
+                }
+                if (valid.length === 0) continue;
+                let pick = valid[Math.floor(Math.random() * valid.length)];
+                last = emptyIdx;
+                board[emptyIdx] = board[pick];
+                board[pick] = 0;
+                emptyIdx = pick;
+            }
+            moves = 0;
+            seconds = 0;
+            gameStarted = false;
+            gameWon = false;
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            document.getElementById('timer').textContent = '00:00';
+            document.getElementById('moves').textContent = '0';
+            document.getElementById('message').textContent = '';
+            renderBoard();
+        }
+
+        function checkWin() {
+            for (let i = 0; i < 15; i++) {
+                if (board[i] !== i + 1) return false;
+            }
+            return board[15] === 0;
+        }
+
+        function moveTile(idx) {
+            if (gameWon) return;
+            if (board[idx] === 0) return;
+            let er = Math.floor(emptyIdx / 4), ec = emptyIdx % 4;
+            let ir = Math.floor(idx / 4), ic = idx % 4;
+            if (Math.abs(er - ir) + Math.abs(ec - ic) !== 1) return;
+
+            if (!gameStarted && !gameWon) {
+                gameStarted = true;
+                timerInterval = setInterval(() => {
+                    seconds++;
+                    let m = String(Math.floor(seconds / 60)).padStart(2, '0');
+                    let s = String(seconds % 60).padStart(2, '0');
+                    document.getElementById('timer').textContent = m + ':' + s;
+                }, 1000);
+            }
+
+            board[emptyIdx] = board[idx];
+            board[idx] = 0;
+            emptyIdx = idx;
+            moves++;
+            document.getElementById('moves').textContent = moves;
+            renderBoard();
+
+            if (checkWin()) {
+                gameWon = true;
+                gameStarted = false;
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+                document.getElementById('message').textContent = '🎉 恭喜完成！';
+            }
+        }
+
+        function renderBoard() {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            for (let i = 0; i < 16; i++) {
+                const div = document.createElement('div');
+                div.className = 'cell';
+                if (board[i] === 0) {
+                    div.classList.add('empty');
+                } else {
+                    div.textContent = board[i];
+                }
+                div.addEventListener('click', (function(idx) {
+                    return function() { moveTile(idx); };
+                })(i));
+                grid.appendChild(div);
+            }
+        }
+
+        function newGame() {
+            initBoard();
+            shuffleBoard();
+            let attempts = 0;
+            while (checkWin() && attempts < 50) {
+                shuffleBoard();
+                attempts++;
+            }
+            renderBoard();
+        }
+
+        window.onload = function() {
+            newGame();
+        };
+    </script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #eef2f7; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .container { text-align: center; background: #fff; padding: 20px 25px 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+        h2 { margin-bottom: 12px; color: #2c3e50; font-weight: 700; }
+        .info { display: flex; justify-content: space-between; margin-bottom: 14px; font-size: 16px; color: #555; background: #f8f9fc; padding: 8px 16px; border-radius: 30px; }
+        .grid { display: grid; grid-template-columns: repeat(4, 70px); gap: 8px; justify-content: center; margin-bottom: 16px; }
+        .cell { width: 70px; height: 70px; background: #4a90d9; color: #fff; font-size: 26px; font-weight: bold; border-radius: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; transition: 0.1s; }
+        .cell:hover { background: #5b9ce0; transform: scale(1.02); }
+        .cell.empty { background: #e8ecf0; cursor: default; }
+        .cell.empty:hover { background: #e8ecf0; transform: none; }
+        .btn { background: #4a90d9; color: #fff; border: none; padding: 10px 34px; font-size: 16px; border-radius: 30px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+        .btn:hover { background: #357abd; transform: scale(1.02); }
+        .msg { margin-top: 12px; font-size: 20px; font-weight: bold; color: #27ae60; min-height: 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>数字华容道</h2>
+        <div class="info">
+            <span>步数: <span id="moves">0</span></span>
+            <span>⏱️ <span id="timer">00:00</span></span>
+        </div>
+        <div class="grid" id="grid"></div>
+        <button class="btn" onclick="newGame()">🔄 打乱</button>
+        <div class="msg" id="message"></div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  这个网页是一个塔罗牌抽牌游戏，背景是从深蓝到紫色的渐变，整体风格神秘而现代。页面顶部有一个大标题'🔮 塔罗牌抽牌游戏'，下面有一句鼓励文字'凭你的直觉，选择一张属于你的塔罗牌'。游戏开始时，用户可以选择一个卡片槽位，点击'抽取塔罗牌'按钮随机抽取塔罗牌，结果区域会显示用户选择的牌和解释。当你点击'重新开始'按钮时，游戏会重置。所有塔罗牌在页面底部展示，用户可以点击查看每张牌的详情。
+-->
+
+<!--
+  AI Prompt / 提示词:
+  这个网页是一个塔罗牌抽牌游戏，背景是从深蓝到紫色的渐变，整体风格神秘而现代。页面顶部有一个大标题'🔮 塔罗牌抽牌游戏'，下面有一句鼓励文字'凭你的直觉，选择一张属于你的塔罗牌'。游戏开始时，用户可以选择一个卡片槽位，点击'抽取塔罗牌'按钮随机抽取塔罗牌，结果区域会显示用户选择的牌和解释。当你点击'重新开始'按钮时，游戏会重置。所有塔罗牌在页面底部展示，用户可以点击查看每张牌的详情。
+-->
+<meta name="description" content="这个网页是一个塔罗牌抽牌游戏，背景是从深蓝到紫色的渐变，整体风格神秘而现代。页面顶部有一个大标题'🔮 塔罗牌抽牌游戏'，下面有一句鼓励文字'凭你的直觉，选择一张属于你的塔罗牌'。游戏开始时，用户可以选择一个卡片槽位，点击'抽取塔罗牌'按钮随机抽取塔罗牌，结果区域会显示用户选择的牌和解释。当你点击'重新开始'按钮时，游戏会重置。所有塔罗牌在页面底部展示，用户可以点击查看每张牌的详情。">
+
+<!--
+  AI Prompt / 提示词:
+  这个网页是一个塔罗牌抽牌游戏，背景是从深蓝到紫色的渐变，整体风格神秘而现代。页面顶部有一个大标题'🔮 塔罗牌抽牌游戏'，下面有一句鼓励文字'凭你的直觉，选择一张属于你的塔罗牌'。游戏开始时，用户可以选择一个卡片槽位，点击'抽取塔罗牌'按钮随机抽取塔罗牌，结果区域会显示用户选择的牌和解释。当你点击'重新开始'按钮时，游戏会重置。所有塔罗牌在页面底部展示，用户可以点击查看每张牌的详情。
+-->
+<meta name="description" content="这个网页是一个塔罗牌抽牌游戏，背景是从深蓝到紫色的渐变，整体风格神秘而现代。页面顶部有一个大标题'🔮 塔罗牌抽牌游戏'，下面有一句鼓励文字'凭你的直觉，选择一张属于你的塔罗牌'。游戏开始时，用户可以选择一个卡片槽位，点击'抽取塔罗牌'按钮随机抽取塔罗牌，结果区域会显示用户选择的牌和解释。当你点击'重新开始'按钮时，游戏会重置。所有塔罗牌在页面底部展示，用户可以点击查看每张牌的详情。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>🔮 塔罗牌抽牌游戏</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: linear-gradient(135deg, #0a0a2e 0%, #1a0a3e 30%, #2a0a4e 60%, #0a0a2e 100%);
+  min-height: 100vh;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  color: #fff;
+  overflow-x: hidden;
+}
+
+/* Floating particles background */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image:
+    radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.2), transparent),
+    radial-gradient(1.5px 1.5px at 50% 10%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.2), transparent),
+    radial-gradient(1px 1px at 90% 80%, rgba(255,255,255,0.25), transparent),
+    radial-gradient(1.5px 1.5px at 15% 85%, rgba(255,255,255,0.15), transparent),
+    radial-gradient(1px 1px at 45% 50%, rgba(255,255,255,0.2), transparent),
+    radial-gradient(1px 1px at 80% 15%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1.5px 1.5px at 60% 90%, rgba(255,255,255,0.15), transparent),
+    radial-gradient(1px 1px at 25% 35%, rgba(255,255,255,0.2), transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  max-width: 800px;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+/* Header */
+.header {
+  text-align: center;
+  padding: 30px 0 20px;
+}
+
+.header h1 {
+  font-size: 2.2em;
+  background: linear-gradient(135deg, #f0e68c, #ffd700, #daa520);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 30px rgba(255, 215, 0, 0.3);
+  margin-bottom: 12px;
+  letter-spacing: 2px;
+}
+
+.header p {
+  color: #b8a9d4;
+  font-size: 1.05em;
+  letter-spacing: 4px;
+}
+
+/* Divider */
+.divider {
+  text-align: center;
+  margin: 10px 0 20px;
+  color: rgba(180, 160, 220, 0.3);
+  font-size: 1.5em;
+  letter-spacing: 20px;
+}
+
+/* Slot selection area */
+.slot-area {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 15px 0;
+  padding: 10px;
+}
+
+.slot-card {
+  width: 120px;
+  height: 180px;
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transform-style: preserve-3d;
+  perspective: 800px;
+}
+
+.slot-card-inner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.8s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.slot-card.flipped .slot-card-inner {
+  transform: rotateY(180deg);
+}
+
+.slot-front, .slot-back {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.slot-front {
+  background: linear-gradient(145deg, #2a1a4e, #1a0a3e);
+  border: 2px solid rgba(180, 140, 220, 0.3);
+  box-shadow: 0 4px 20px rgba(100, 60, 180, 0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.slot-front::before {
+  content: '★';
+  font-size: 2em;
+  color: rgba(180, 140, 220, 0.4);
+  margin-bottom: 8px;
+}
+
+.slot-front .slot-number {
+  font-size: 0.75em;
+  color: rgba(180, 140, 220, 0.3);
+  letter-spacing: 2px;
+}
+
+.slot-back {
+  background: linear-gradient(145deg, #1a0a3e, #0d0520);
+  border: 2px solid rgba(200, 170, 240, 0.5);
+  box-shadow: 0 4px 25px rgba(150, 100, 220, 0.4), inset 0 0 30px rgba(120, 60, 200, 0.15);
+  transform: rotateY(180deg);
+}
+
+.slot-back .card-emoji {
+  font-size: 2.8em;
+  margin-bottom: 6px;
+}
+
+.slot-back .card-name {
+  font-size: 0.85em;
+  color: #d4c0f0;
+  text-align: center;
+  padding: 0 8px;
+  line-height: 1.3;
+}
+
+.slot-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 10px 30px rgba(150, 100, 220, 0.4);
+}
+
+.slot-card.selected {
+  transform: translateY(-12px);
+}
+
+.slot-card.selected .slot-front {
+  border-color: #ffd700;
+  box-shadow: 0 0 25px rgba(255, 215, 0, 0.4), inset 0 0 15px rgba(255, 215, 0, 0.05);
+}
+
+/* Buttons */
+.btn-area {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 12px 36px;
+  border: none;
+  border-radius: 30px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  letter-spacing: 2px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.btn-draw {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
+}
+
+.btn-draw:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 30px rgba(124, 58, 237, 0.5);
+}
+
+.btn-draw:active {
+  transform: translateY(0);
+}
+
+.btn-draw:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-reset {
+  background: transparent;
+  color: #b8a9d4;
+  border: 1px solid rgba(180, 160, 220, 0.3);
+}
+
+.btn-reset:hover {
+  background: rgba(180, 160, 220, 0.1);
+  border-color: rgba(180, 160, 220, 0.6);
+}
+
+/* Result area */
+.result-area {
+  margin: 15px auto;
+  padding: 25px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(30, 15, 60, 0.8), rgba(20, 10, 50, 0.8));
+  border: 1px solid rgba(180, 140, 220, 0.15);
+  backdrop-filter: blur(10px);
+  max-width: 500px;
+  text-align: center;
+  transition: all 0.5s ease;
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.result-area.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.result-area .result-emoji {
+  font-size: 3em;
+  margin-bottom: 5px;
+}
+
+.result-area .result-title {
+  font-size: 1.4em;
+  color: #ffd700;
+  margin-bottom: 4px;
+  font-weight: bold;
+}
+
+.result-area .result-subtitle {
+  font-size: 0.85em;
+  color: #a890cc;
+  margin-bottom: 12px;
+}
+
+.result-area .result-meaning {
+  font-size: 0.95em;
+  color: #d4c8f0;
+  line-height: 1.7;
+  text-align: left;
+  padding: 0 10px;
+}
+
+/* Card Gallery */
+.gallery-title {
+  text-align: center;
+  margin: 30px 0 15px;
+  font-size: 1.2em;
+  color: #b8a9d4;
+  letter-spacing: 2px;
+}
+
+.gallery {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding-bottom: 30px;
+}
+
+.gallery-card {
+  width: 90px;
+  height: 135px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #1a0a3e, #12082e);
+  border: 1px solid rgba(180, 140, 220, 0.2);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  padding: 6px;
+}
+
+.gallery-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(180, 140, 220, 0.5);
+  box-shadow: 0 6px 20px rgba(100, 60, 180, 0.3);
+}
+
+.gallery-card .card-emoji {
+  font-size: 1.8em;
+  margin-bottom: 3px;
+}
+
+.gallery-card .card-name {
+  font-size: 0.6em;
+  color: #b8a9d4;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(5px);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.modal-overlay.active {
+  display: flex;
+}
+
+.modal {
+  background: linear-gradient(135deg, #1a0a3e, #2a1a4e);
+  border: 1px solid rgba(180, 140, 220, 0.3);
+  border-radius: 20px;
+  padding: 30px;
+  max-width: 400px;
+  width: 100%;
+  position: relative;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  text-align: center;
+}
+
+.modal .close-btn {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.5em;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.modal .close-btn:hover { color: #fff; }
+
+.modal .modal-emoji {
+  font-size: 3.5em;
+  margin-bottom: 8px;
+}
+
+.modal .modal-title {
+  font-size: 1.5em;
+  color: #ffd700;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.modal .modal-subtitle {
+  font-size: 0.9em;
+  color: #a890cc;
+  margin-bottom: 15px;
+}
+
+.modal .modal-meaning {
+  font-size: 0.95em;
+  color: #d4c8f0;
+  line-height: 1.8;
+  text-align: left;
+}
+
+/* Animations */
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(150, 100, 220, 0.3); }
+  50% { box-shadow: 0 0 40px rgba(150, 100, 220, 0.6); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.slot-card.highlight {
+  animation: glow 1.5s ease-in-out infinite;
+}
+
+.slot-card.floating {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .header h1 { font-size: 1.6em; }
+  .header p { font-size: 0.9em; letter-spacing: 2px; }
+  .slot-card { width: 100px; height: 150px; }
+  .gallery-card { width: 75px; height: 112px; }
+  .gallery-card .card-emoji { font-size: 1.4em; }
+  .gallery-card .card-name { font-size: 0.5em; }
+  .slot-area { gap: 10px; }
+  .result-area { margin: 15px 10px; }
+}
+
+@media (max-width: 400px) {
+  .slot-card { width: 80px; height: 120px; }
+  .gallery-card { width: 65px; height: 98px; }
+  .btn { padding: 10px 24px; font-size: 0.9em; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <h1>🔮 塔罗牌抽牌游戏</h1>
+    <p>凭你的直觉，选择一张属于你的塔罗牌</p>
+  </div>
+
+  <div class="divider">✦ ✦ ✦</div>
+
+  <!-- Slot area -->
+  <div class="slot-area" id="slotArea"></div>
+
+  <!-- Buttons -->
+  <div class="btn-area">
+    <button class="btn btn-draw" id="btnDraw" disabled>抽取塔罗牌</button>
+    <button class="btn btn-reset" id="btnReset">重新开始</button>
+  </div>
+
+  <!-- Result -->
+  <div class="result-area" id="resultArea">
+    <div class="result-emoji" id="resultEmoji">🃏</div>
+    <div class="result-title" id="resultTitle"></div>
+    <div class="result-subtitle" id="resultSubtitle"></div>
+    <div class="result-meaning" id="resultMeaning"></div>
+  </div>
+
+  <div class="divider">✦ ✦ ✦</div>
+
+  <!-- Gallery -->
+  <div class="gallery-title">📜 全部塔罗牌</div>
+  <div class="gallery" id="gallery"></div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <button class="close-btn" id="modalClose">&times;</button>
+    <div class="modal-emoji" id="modalEmoji">🃏</div>
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-subtitle" id="modalSubtitle"></div>
+    <div class="modal-meaning" id="modalMeaning"></div>
+  </div>
+</div>
+
+<script>
+// ========== TAROT DATA ==========
+const TAROT_CARDS = [
+  { id: 0, name: '愚者', en: 'The Fool', emoji: '🃏', meaning: '新的开始、冒险、无限可能。放下过去的包袱，勇敢地踏上未知的旅程。相信你的直觉，保持纯真与开放的心态。', keyword: '开始' },
+  { id: 1, name: '魔术师', en: 'The Magician', emoji: '✨', meaning: '创造力、技能、自信。你拥有实现目标所需的一切资源。集中你的意志力，将想法转化为现实。', keyword: '创造' },
+  { id: 2, name: '女祭司', en: 'The High Priestess', emoji: '🌙', meaning: '直觉、潜意识、内在智慧。静下心来聆听内心的声音，答案就在你的潜意识之中。信任你的第六感。', keyword: '直觉' },
+  { id: 3, name: '女皇', en: 'The Empress', emoji: '👑', meaning: '丰饶、母性、自然的恩赐。丰收与成长的时期，拥抱生活中的美好与富足。关注家庭与情感的滋养。', keyword: '丰饶' },
+  { id: 4, name: '皇帝', en: 'The Emperor', emoji: '🏛️', meaning: '权威、稳定、领导力。建立秩序与结构，用理性和纪律掌控局面。负责任的领导者需要坚定的决策。', keyword: '权威' },
+  { id: 5, name: '教皇', en: 'The Hierophant', emoji: '📿', meaning: '传统、信仰、导师。寻求精神上的指导，或遵循既定的规则与仪式。传统的智慧中蕴含着答案。', keyword: '传承' },
+  { id: 6, name: '恋人', en: 'The Lovers', emoji: '💕', meaning: '爱情、选择、和谐。面临重要的关系抉择，追随内心的真实感受。真正的爱来自于完整的自我。', keyword: '爱情' },
+  { id: 7, name: '战车', en: 'The Chariot', emoji: '⚔️', meaning: '胜利、意志力、征服。通过坚定的决心和自律克服障碍。保持专注，胜利就在前方。', keyword: '胜利' },
+  { id: 8, name: '力量', en: 'Strength', emoji: '🦁', meaning: '勇气、内在力量、耐心。真正的力量来自于内心的坚韧与温柔并用。用爱与勇气面对一切挑战。', keyword: '勇气' },
+  { id: 9, name: '隐士', en: 'The Hermit', emoji: '🏮', meaning: '内省、孤独、智慧。暂时远离喧嚣，在独处中寻找光明。内在的指引会照亮前行的道路。', keyword: '内省' },
+  { id: 10, name: '命运之轮', en: 'Wheel of Fortune', emoji: '🔄', meaning: '变化、循环、机遇。命运的齿轮正在转动，好运即将来临。顺应变化，抓住转瞬即逝的机会。', keyword: '转变' },
+  { id: 11, name: '正义', en: 'Justice', emoji: '⚖️', meaning: '公正、真理、因果。你的付出将得到应有的回报。诚实地面对一切，真理终将获胜。', keyword: '公正' },
+  { id: 12, name: '倒吊人', en: 'The Hanged Man', emoji: '🔄', meaning: '牺牲、换位思考、新的视角。有时候需要暂停和放下，用不同的角度看世界。牺牲是为了更大的收获。', keyword: '放下' },
+  { id: 13, name: '死神', en: 'Death', emoji: '💀', meaning: '结束、转变、新生。旧的篇章必须结束，新的才能开始。放下不再服务于你的一切，迎接重生。', keyword: '蜕变' },
+  { id: 14, name: '节制', en: 'Temperance', emoji: '⚗️', meaning: '平衡、适度、和谐。在生活的各个方面寻找平衡。耐心与中庸之道将带来内心的平静。', keyword: '平衡' },
+  { id: 15, name: '恶魔', en: 'The Devil', emoji: '😈', meaning: '束缚、执念、物质主义。认清那些限制你的枷锁，它们大多来自内心。摆脱不健康的执着，找回自由。', keyword: '觉醒' },
+  { id: 16, name: '高塔', en: 'The Tower', emoji: '🌋', meaning: '剧变、崩塌、觉醒。旧有的结构被打破，看似毁灭却是重建的开始。暴风雨过后，天空将更加清澈。', keyword: '重建' },
+  { id: 17, name: '星星', en: 'The Star', emoji: '⭐', meaning: '希望、灵感、宁静。在最黑暗的时刻，星星为你指引方向。保持希望，相信未来充满光明与可能。', keyword: '希望' },
+  { id: 18, name: '月亮', en: 'The Moon', emoji: '🌕', meaning: '幻觉、恐惧、潜意识。表面的平静下暗藏暗流。面对内心的恐惧，辨别真相与幻象。', keyword: '觉察' },
+  { id: 19, name: '太阳', en: 'The Sun', emoji: '☀️', meaning: '喜悦、成功、活力。最积极的牌之一！快乐、成就与满足。你正处在人生的光明时期，尽情享受。', keyword: '喜悦' },
+  { id: 20, name: '审判', en: 'Judgement', emoji: '📯', meaning: '觉醒、重生、召唤。内心的召唤响起，是时候做出重要的决定。过去的经验让你获得了新的领悟。', keyword: '觉醒' },
+  { id: 21, name: '世界', en: 'The World', emoji: '🌍', meaning: '完成、成就、圆满。一个周期的完美结束，目标的实现。你已抵达旅程的终点，同时新的循环即将开始。', keyword: '圆满' }
+];
+
+// ========== STATE ==========
+const SLOT_COUNT = 5;
+let slots = [];          // Array of card indices or null
+let selectedSlot = -1;
+let hasDrawn = false;
+
+const slotArea = document.getElementById('slotArea');
+const gallery = document.getElementById('gallery');
+const btnDraw = document.getElementById('btnDraw');
+const btnReset = document.getElementById('btnReset');
+const resultArea = document.getElementById('resultArea');
+const resultEmoji = document.getElementById('resultEmoji');
+const resultTitle = document.getElementById('resultTitle');
+const resultSubtitle = document.getElementById('resultSubtitle');
+const resultMeaning = document.getElementById('resultMeaning');
+
+// Modal
+const modal = document.getElementById('modal');
+const modalClose = document.getElementById('modalClose');
+const modalEmoji = document.getElementById('modalEmoji');
+const modalTitle = document.getElementById('modalTitle');
+const modalSubtitle = document.getElementById('modalSubtitle');
+const modalMeaning = document.getElementById('modalMeaning');
+
+// ========== INIT ==========
+function initGame() {
+  slots = new Array(SLOT_COUNT).fill(null);
+  selectedSlot = -1;
+  hasDrawn = false;
+  resultArea.classList.remove('visible');
+  btnDraw.disabled = true;
+  renderSlots();
+  updateButtonStates();
+}
+
+function renderSlots() {
+  slotArea.innerHTML = '';
+  for (let i = 0; i < SLOT_COUNT; i++) {
+    const card = document.createElement('div');
+    card.className = `slot-card${slots[i] !== null ? ' flipped' : ''}${selectedSlot === i ? ' selected' : ''}`;
+    if (slots[i] === null) card.classList.add('floating');
+
+    card.innerHTML = `
+      <div class="slot-card-inner">
+        <div class="slot-front">
+          <div class="slot-number">第 ${i + 1} 张</div>
+        </div>
+        <div class="slot-back">
+          ${slots[i] !== null ? `
+            <div class="card-emoji">${TAROT_CARDS[slots[i]].emoji}</div>
+            <div class="card-name">${TAROT_CARDS[slots[i]].name}</div>
+          ` : '<div class="card-emoji">❓</div><div class="card-name">未抽取</div>'}
+        </div>
+      </div>
+    `;
+
+    if (!hasDrawn && slots[i] === null) {
+      card.addEventListener('click', () => selectSlot(i));
+    }
+
+    slotArea.appendChild(card);
+  }
+}
+
+function selectSlot(idx) {
+  if (hasDrawn) return;
+  if (slots[idx] !== null) return;
+  selectedSlot = idx;
+  btnDraw.disabled = false;
+  renderSlots();
+  updateButtonStates();
+}
+
+function updateButtonStates() {
+  btnDraw.disabled = selectedSlot < 0 || hasDrawn;
+}
+
+// ========== DRAW CARD ==========
+btnDraw.addEventListener('click', () => {
+  if (selectedSlot < 0 || hasDrawn) return;
+
+  // Pick a random card that hasn't been drawn yet
+  const drawnCardIds = slots.filter(id => id !== null);
+  const available = TAROT_CARDS.filter(c => !drawnCardIds.includes(c.id));
+
+  if (available.length === 0) {
+    alert('所有塔罗牌都已抽完！请重新开始。');
+    return;
+  }
+
+  const randomIdx = Math.floor(Math.random() * available.length);
+  const card = available[randomIdx];
+
+  slots[selectedSlot] = card.id;
+  hasDrawn = true;
+
+  // Show result
+  resultEmoji.textContent = card.emoji;
+  resultTitle.textContent = `「${card.name}」`;
+  resultSubtitle.textContent = `${card.en} — ${card.keyword}`;
+  resultMeaning.textContent = card.meaning;
+  resultArea.classList.add('visible');
+
+  btnDraw.disabled = true;
+  renderSlots();
+});
+
+// ========== RESET ==========
+btnReset.addEventListener('click', initGame);
+
+// ========== GALLERY ==========
+function renderGallery() {
+  gallery.innerHTML = '';
+  TAROT_CARDS.forEach(card => {
+    const el = document.createElement('div');
+    el.className = 'gallery-card';
+    el.innerHTML = `
+      <div class="card-emoji">${card.emoji}</div>
+      <div class="card-name">${card.name}</div>
+    `;
+    el.addEventListener('click', () => showCardDetail(card));
+    gallery.appendChild(el);
+  });
+}
+
+function showCardDetail(card) {
+  modalEmoji.textContent = card.emoji;
+  modalTitle.textContent = `「${card.name}」`;
+  modalSubtitle.textContent = `${card.en} — ${card.keyword}`;
+  modalMeaning.textContent = card.meaning;
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal() {
+  modal.classList.remove('active');
+  document.body.style.overflow = '';
+}
+
+modalClose.addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => {
+  if (e.target === modal) closeModal();
+});
+
+// ========== PARTICLES DYNAMIC ==========
+function createParticles() {
+  const style = document.createElement('style');
+  let particles = '';
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random() * 100;
+    const y = Math.random() * 100;
+    const size = Math.random() * 2 + 0.5;
+    const opacity = Math.random() * 0.3 + 0.1;
+    const delay = Math.random() * 8;
+    const duration = Math.random() * 6 + 4;
+    particles += `
+      @keyframes twinkle${i} {
+        0%, 100% { opacity: ${opacity}; transform: translate(0, 0); }
+        50% { opacity: ${opacity * 0.3}; transform: translate(${(Math.random()-0.5)*30}px, ${(Math.random()-0.5)*30}px); }
+      }
+      .p${i} {
+        position: fixed;
+        width: ${size}px;
+        height: ${size}px;
+        left: ${x}%;
+        top: ${y}%;
+        background: rgba(200, 180, 255, ${opacity});
+        border-radius: 50%;
+        pointer-events: none;
+        animation: twinkle${i} ${duration}s ease-in-out ${delay}s infinite;
+        z-index: 0;
+      }
+    `;
+  }
+  style.textContent = particles;
+  document.head.appendChild(style);
+
+  for (let i = 0; i < 30; i++) {
+    const dot = document.createElement('div');
+    dot.className = `p${i}`;
+    document.body.appendChild(dot);
+  }
+}
+
+// ========== START ==========
+createParticles();
+renderGallery();
+initGame();
+</script>
+</body>
+</html>

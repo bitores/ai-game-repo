@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>数字华容道</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+canvas { display: block; background: #16213e; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+const W = 500, H = 580
+canvas.width = W
+canvas.height = H
+
+const GRID = 4
+const TILE = 100
+const GAP = 6
+const BOARD = GRID * (TILE + GAP) + GAP
+const OX = (W - BOARD) / 2
+const OY = 70
+
+let tiles = []
+let empty = -1
+let moves = 0
+let timer = 0
+let playing = false
+let won = false
+let startTime = 0
+
+// ---- Init ----
+function init() {
+  tiles = []
+  for (let i = 1; i < GRID * GRID; i++) tiles.push(i)
+  tiles.push(0)
+  do { shuffle(tiles) } while (!solvable() || solved())
+  empty = tiles.indexOf(0)
+  moves = 0
+  timer = 0
+  won = false
+  playing = false
+  startTime = 0
+}
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+}
+
+function solvable() {
+  let inv = 0
+  const a = tiles.filter(t => t !== 0)
+  for (let i = 0; i < a.length; i++)
+    for (let j = i + 1; j < a.length; j++)
+      if (a[i] > a[j]) inv++
+  const row = Math.floor(tiles.indexOf(0) / GRID)
+  return (inv + row) % 2 === 1
+}
+
+function solved() {
+  for (let i = 0; i < tiles.length - 1; i++)
+    if (tiles[i] !== i + 1) return false
+  return tiles[tiles.length - 1] === 0
+}
+
+function canMove(i) {
+  const ei = empty
+  const er = Math.floor(ei / GRID), ec = ei % GRID
+  const ir = Math.floor(i / GRID), ic = i % GRID
+  return Math.abs(er - ir) + Math.abs(ec - ic) === 1
+}
+
+function move(i) {
+  if (won || !canMove(i)) return
+  if (!playing) { playing = true; startTime = performance.now() }
+  tiles[empty] = tiles[i]
+  tiles[i] = 0
+  empty = i
+  moves++
+  if (solved()) { won = true; playing = false }
+}
+
+// ---- Input ----
+function getGridPos(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect()
+  const sx = canvas.width / rect.width
+  const sy = canvas.height / rect.height
+  const mx = (clientX - rect.left) * sx
+  const my = (clientY - rect.top) * sy
+  if (my < OY || my > OY + BOARD || mx < OX || mx > OX + BOARD) return -1
+  const col = Math.floor((mx - OX) / (TILE + GAP))
+  const row = Math.floor((my - OY) / (TILE + GAP))
+  if (col >= GRID || row >= GRID) return -1
+  return row * GRID + col
+}
+
+canvas.addEventListener('click', e => {
+  const i = getGridPos(e.clientX, e.clientY)
+  if (i >= 0) move(i)
+})
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault()
+  if (e.touches.length === 1) {
+    const t = e.touches[0]
+    canvas._tx = t.clientX
+    canvas._ty = t.clientY
+  }
+}, { passive: false })
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault()
+  if (canvas._tx != null) {
+    const i = getGridPos(canvas._tx, canvas._ty)
+    if (i >= 0) move(i)
+    canvas._tx = null
+    canvas._ty = null
+  }
+}, { passive: false })
+
+document.addEventListener('keydown', e => {
+  if ((e.key === 'r' || e.key === 'R') && won) init()
+  if (e.key === 'r' || e.key === 'R') init()
+})
+
+// ---- Draw ----
+function draw() {
+  ctx.fillStyle = '#16213e'
+  ctx.fillRect(0, 0, W, H)
+
+  // Timer (real seconds)
+  let sec = 0
+  if (playing) {
+    sec = Math.floor((performance.now() - startTime) / 1000)
+    timer = sec
+  } else if (won) {
+    sec = timer
+  } else {
+    sec = 0
+  }
+
+  // HUD
+  ctx.fillStyle = '#4ecca3'
+  ctx.font = 'bold 22px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('数字华容道', W/2, 32)
+
+  ctx.fillStyle = '#a8b2d1'
+  ctx.font = '15px sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('步数: ' + moves, OX, OY - 14)
+  ctx.textAlign = 'right'
+  ctx.fillText('时间: ' + sec + 's', W - OX, OY - 14)
+  ctx.textAlign = 'left'
+
+  // Board shadow
+  ctx.shadowColor = 'rgba(0,0,0,0.4)'
+  ctx.shadowBlur = 16
+  ctx.shadowOffsetY = 4
+  ctx.fillStyle = '#0f3460'
+  ctx.beginPath()
+  roundRect(ctx, OX - 4, OY - 4, BOARD + 8, BOARD + 8, 10)
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.shadowBlur = 0
+  ctx.shadowOffsetY = 0
+
+  // Board bg
+  ctx.fillStyle = '#1a1a3e'
+  ctx.beginPath()
+  roundRect(ctx, OX, OY, BOARD, BOARD, 8)
+  ctx.fill()
+
+  // Tiles
+  for (let i = 0; i < tiles.length; i++) {
+    if (tiles[i] === 0) continue
+    const row = Math.floor(i / GRID)
+    const col = i % GRID
+    const x = OX + col * (TILE + GAP)
+    const y = OY + row * (TILE + GAP)
+
+    // Tile gradient
+    const grad = ctx.createLinearGradient(x, y, x + TILE, y + TILE)
+    grad.addColorStop(0, '#e94560')
+    grad.addColorStop(1, '#c23152')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    roundRect(ctx, x, y, TILE, TILE, 8)
+    ctx.fill()
+
+    // Highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'
+    ctx.beginPath()
+    roundRect(ctx, x + 4, y + 4, TILE - 8, TILE / 2 - 4, 6)
+    ctx.fill()
+
+    // Number
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 34px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(tiles[i].toString(), x + TILE/2, y + TILE/2 + 2)
+    ctx.textBaseline = 'alphabetic'
+  }
+
+  // Win overlay
+  if (won) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'
+    ctx.fillRect(0, 0, W, H)
+
+    // Win card
+    ctx.fillStyle = '#1a1a2e'
+    ctx.beginPath()
+    roundRect(ctx, W/2 - 140, H/2 - 70, 280, 140, 16)
+    ctx.fill()
+
+    ctx.fillStyle = '#4ecca3'
+    ctx.font = 'bold 36px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('🎉 完成！', W/2, H/2 - 20)
+
+    ctx.fillStyle = '#a8b2d1'
+    ctx.font = '16px sans-serif'
+    ctx.fillText('步数 ' + moves + ' · 用时 ' + timer + 's', W/2, H/2 + 28)
+
+    ctx.fillStyle = '#4ecca3'
+    ctx.font = '14px sans-serif'
+    ctx.fillText('按 R 键重新开始', W/2, H/2 + 58)
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'alphabetic'
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  if (r > w/2) r = w/2
+  if (r > h/2) r = h/2
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+  ctx.lineTo(x + r, y + h)
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+  ctx.closePath()
+}
+
+// ---- Loop ----
+function loop() {
+  draw()
+  requestAnimationFrame(loop)
+}
+
+init()
+loop()
+
+// Responsive
+function fit() {
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.92
+  canvas.style.width = (W * s) + 'px'
+  canvas.style.height = (H * s) + 'px'
+}
+window.addEventListener('resize', fit)
+fit()
+</script>
+</body>
+</html>

@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>光之迷宫 · 折射反射</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #0a0a1a; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+canvas { display: block; }
+#ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+#hud { display: flex; justify-content: space-between; padding: 14px 18px; }
+#score { color: #fff; font-size: 17px; text-shadow: 0 2px 12px rgba(0,0,0,0.9); background: rgba(0,0,0,0.4); padding: 6px 14px; border-radius: 20px; backdrop-filter: blur(4px); }
+#hp { color: #ffdd44; font-size: 17px; text-shadow: 0 2px 12px rgba(0,0,0,0.9); background: rgba(0,0,0,0.4); padding: 6px 14px; border-radius: 20px; backdrop-filter: blur(4px); }
+#msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  color: #fff; font-size: 34px; text-align: center; text-shadow: 0 6px 30px rgba(0,0,0,0.95);
+  pointer-events: none; display: none; background: rgba(0,0,0,0.6); padding: 24px 40px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); }
+#msg small { display: block; font-size: 16px; color: #aac; margin-top: 10px; }
+#info { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  color: rgba(255,255,255,0.3); font-size: 12px; text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  background: rgba(0,0,0,0.3); padding: 6px 16px; border-radius: 30px; backdrop-filter: blur(4px); pointer-events: none; }
+.btn { pointer-events: auto; cursor: pointer; border: none; background: rgba(255,255,255,0.08); color: #fff; padding: 8px 20px; border-radius: 30px; font-size: 15px; backdrop-filter: blur(4px); transition: 0.2s; border: 1px solid rgba(255,255,255,0.05); }
+.btn:hover { background: rgba(255,255,255,0.15); }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="hud">
+    <span id="score">⚡ 0 / 6</span>
+    <span id="hp">💡 3</span>
+  </div>
+  <div id="msg"></div>
+  <div id="info">WASD 移动 · 鼠标/触摸 控制光线方向</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+
+// ======================= 迷宫数据 =======================
+const COLS = 14, ROWS = 11
+// 0=空地 1=墙壁 2=镜面 3=棱镜 4=核心 5=玩家起点
+const MAP_TEMPLATE = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,5,0,0,0,2,0,0,0,0,3,0,0,1],
+  [1,0,1,1,0,1,0,1,1,0,1,1,0,1],
+  [1,0,0,2,0,0,0,0,4,0,0,0,0,1],
+  [1,1,0,1,1,0,1,1,0,1,1,0,1,1],
+  [1,0,0,0,4,0,0,0,0,0,2,0,0,1],
+  [1,1,1,0,1,1,1,1,0,1,1,0,1,1],
+  [1,0,0,0,0,0,3,0,0,0,0,0,0,1],
+  [1,0,1,1,0,1,1,1,0,1,1,0,1,1],
+  [1,0,0,0,0,0,0,0,0,0,0,4,0,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+]
+// 镜面方向: 0=水平 1=垂直 2=对角/
+let mirrorDirs = {}
+let prismDirs = {}
+// 手动设置镜面方向 (x,y)
+mirrorDirs['1,5'] = 1   // 垂直
+mirrorDirs['3,3'] = 0   // 水平
+mirrorDirs['5,10'] = 1  // 垂直
+mirrorDirs['3,12'] = 0  // 水平 (实际上这个位置是空地，调整)
+// 修正：镜面在(1,5) (3,3) (5,10) 以及(7,6)不是镜面，调整
+// 重新检查地图：位置(1,5)=2, (3,3)=2, (5,10)=2, (7,6)=3不是镜面
+// 只有三个镜面，我调整一下地图确保有足够镜面
+// 修改地图：在(7,6)放一个镜面而不是棱镜
+let map = MAP_TEMPLATE.map(row => [...row])
+map[7][6] = 2 // 改为镜面
+mirrorDirs['7,6'] = 0
+
+// 棱镜位置 (折射)
+prismDirs['1,10'] = 1  // 垂直偏移
+prismDirs['7,6'] = 0   // 水平偏移 (但这里改成了镜面)
+// 把(7,6)改回棱镜? 算了，我加一个棱镜在别处
+map[7][6] = 3 // 还是棱镜
+delete mirrorDirs['7,6']
+prismDirs['7,6'] = 0
+// 再加一个棱镜在(4,5)附近
+map[4][5] = 3 // 把核心挪一下
+prismDirs['4,5'] = 1
+
+// 核心位置
+let corePositions = []
+for (let r = 0; r < ROWS; r++)
+  for (let c = 0; c < COLS; c++)
+    if (map[r][c] === 4) corePositions.push({x:c, z:r})
+
+// 玩家起点
+let playerStart = {x:1, z:1}
+for (let r = 0; r < ROWS; r++)
+  for (let c = 0; c < COLS; c++)
+    if (map[r][c] === 5) { playerStart = {x:c, z:r}; map[r][c] = 0; }
+
+// ======================= THREE.JS场景 =======================
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x080820)
+scene.fog = new THREE.Fog(0x080820, 25, 45)
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 80)
+camera.position.set(0, 16, 20)
+camera.lookAt(0, 0, 0)
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+renderer.shadowMap.enabled = true
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.0
+document.body.prepend(renderer.domElement)
+
+// ======================= 光照 =======================
+const ambient = new THREE.AmbientLight(0x222244, 0.6)
+scene.add(ambient)
+
+const dirLight = new THREE.DirectionalLight(0xffeedd, 2.0)
+dirLight.position.set(12, 22, 8)
+dirLight.castShadow = true
+dirLight.shadow.mapSize.width = 1024
+dirLight.shadow.mapSize.height = 1024
+dirLight.shadow.camera.near = 0.5
+dirLight.shadow.camera.far = 40
+dirLight.shadow.camera.left = -18
+dirLight.shadow.camera.right = 18
+dirLight.shadow.camera.top = 18
+dirLight.shadow.camera.bottom = -18
+scene.add(dirLight)
+
+const fillLight = new THREE.DirectionalLight(0x4466ff, 0.4)
+fillLight.position.set(-8, 6, -10)
+scene.add(fillLight)
+
+const rim = new THREE.DirectionalLight(0xff66aa, 0.3)
+rim.position.set(0, -4, -18)
+scene.add(rim)
+
+// ======================= 地面 =======================
+const groundGeo = new THREE.PlaneGeometry(COLS+2, ROWS+2)
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x0a0a2e, roughness: 0.9, metalness: 0.1
+})
+const ground = new THREE.Mesh(groundGeo, groundMat)
+ground.rotation.x = -Math.PI/2
+ground.position.set(COLS/2-0.5, -0.05, ROWS/2-0.5)
+ground.receiveShadow = true
+scene.add(ground)
+
+// 网格线
+const gridHelper = new THREE.GridHelper(Math.max(COLS, ROWS)+4, Math.max(COLS, ROWS)+4, 0x3333aa, 0x222266)
+gridHelper.position.set(COLS/2-0.5, 0.01, ROWS/2-0.5)
+gridHelper.material.transparent = true
+gridHelper.material.opacity = 0.15
+scene.add(gridHelper)
+
+// ======================= 构建迷宫 =======================
+const wallMat = new THREE.MeshStandardMaterial({
+  color: 0x2a2a5a, roughness: 0.7, metalness: 0.3,
+  emissive: 0x111133, emissiveIntensity: 0.1
+})
+const wallMatTop = new THREE.MeshStandardMaterial({
+  color: 0x3a3a7a, roughness: 0.6, metalness: 0.2,
+  emissive: 0x222255, emissiveIntensity: 0.05
+})
+const mirrorMat = new THREE.MeshStandardMaterial({
+  color: 0x88ccff, roughness: 0.05, metalness: 0.95,
+  emissive: 0x4488ff, emissiveIntensity: 0.15,
+  envMapIntensity: 1.5
+})
+const prismMat = new THREE.MeshStandardMaterial({
+  color: 0xff88dd, roughness: 0.1, metalness: 0.3,
+  emissive: 0xff44aa, emissiveIntensity: 0.2,
+  transparent: true, opacity: 0.85
+})
+
+const wallMeshes = []
+const mirrorMeshes = []
+const prismMeshes = []
+const coreMeshes = []
+const BLOCK_SIZE = 0.9
+const WALL_HEIGHT = 1.6
+
+function buildMaze() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = map[r][c]
+      const px = c, pz = r
+      if (cell === 1) {
+        const geo = new THREE.BoxGeometry(BLOCK_SIZE, WALL_HEIGHT, BLOCK_SIZE)
+        const mesh = new THREE.Mesh(geo, wallMat)
+        mesh.position.set(px, WALL_HEIGHT/2, pz)
+        mesh.castShadow = true
+        mesh.receiveShadow = true
+        scene.add(mesh)
+        wallMeshes.push(mesh)
+        // 顶部装饰
+        const topGeo = new THREE.BoxGeometry(BLOCK_SIZE*0.9, 0.08, BLOCK_SIZE*0.9)
+        const topMesh = new THREE.Mesh(topGeo, wallMatTop)
+        topMesh.position.set(px, WALL_HEIGHT, pz)
+        scene.add(topMesh)
+      } else if (cell === 2) {
+        // 镜面 - 用薄片表示
+        const dir = mirrorDirs[`${r},${c}`] || 0
+        const geo = new THREE.BoxGeometry(dir===0 ? BLOCK_SIZE : 0.06, 0.9, dir===0 ? 0.06 : BLOCK_SIZE)
+        const mesh = new THREE.Mesh(geo, mirrorMat)
+        mesh.position.set(px, 0.45, pz)
+        mesh.castShadow = true
+        scene.add(mesh)
+        mirrorMeshes.push({mesh, dir, gridX:c, gridZ:r})
+        // 标记边框
+        const frameMat = new THREE.MeshBasicMaterial({ color: 0x66aaff, transparent: true, opacity: 0.3 })
+        const frame = new THREE.Mesh(
+          new THREE.BoxGeometry(dir===0 ? BLOCK_SIZE*0.7 : 0.04, 0.02, dir===0 ? 0.04 : BLOCK_SIZE*0.7),
+          frameMat
+        )
+        frame.position.set(px, 0.9, pz)
+        scene.add(frame)
+      } else if (cell === 3) {
+        // 棱镜 - 六面体
+        const geo = new THREE.OctahedronGeometry(0.4)
+        const mesh = new THREE.Mesh(geo, prismMat)
+        mesh.position.set(px, 0.5, pz)
+        mesh.castShadow = true
+        scene.add(mesh)
+        prismMeshes.push({mesh, gridX:c, gridZ:r, phase:Math.random()*6.28})
+      } else if (cell === 4) {
+        // 能量核心
+        const geo = new THREE.SphereGeometry(0.35, 16, 16)
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x888888, roughness: 0.2, metalness: 0.1,
+          emissive: 0x444444, emissiveIntensity: 0.1
+        })
+        const mesh = new THREE.Mesh(geo, mat)
+        mesh.position.set(px, 0.4, pz)
+        mesh.castShadow = true
+        scene.add(mesh)
+        // 光环
+        const ringGeo = new THREE.TorusGeometry(0.45, 0.02, 8, 20)
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x666688, transparent: true, opacity: 0.2 })
+        const ring = new THREE.Mesh(ringGeo, ringMat)
+        ring.rotation.x = Math.PI/2
+        ring.position.set(px, 0.15, pz)
+        scene.add(ring)
+        coreMeshes.push({
+          mesh,
+          ring,
+          mat,
+          ringMat,
+          gridX: c,
+          gridZ: r,
+          lit: false,
+          color: new THREE.Color().setHSL(Math.random(), 0.9, 0.6)
+        })
+      }
+    }
+  }
+}
+buildMaze()
+
+// ======================= 玩家 =======================
+const playerGroup = new THREE.Group()
+const playerBodyGeo = new THREE.IcosahedronGeometry(0.45, 1)
+const playerMat = new THREE.MeshStandardMaterial({
+  color: 0x4effb8, roughness: 0.2, metalness: 0.7,
+  emissive: 0x4effb8, emissiveIntensity: 0.25
+})
+const playerBody = new THREE.Mesh(playerBodyGeo, playerMat)
+playerBody.castShadow = true
+playerGroup.add(playerBody)
+
+const playerGlowGeo = new THREE.IcosahedronGeometry(0.6, 1)
+const playerGlowMat = new THREE.MeshBasicMaterial({
+  color: 0x4effb8, transparent: true, opacity: 0.12
+})
+const playerGlow = new THREE.Mesh(playerGlowGeo, playerGlowMat)
+playerGroup.add(playerGlow)
+
+// 光晕
+const haloGeo = new THREE.SphereGeometry(0.8, 8, 8)
+const haloMat = new THREE.MeshBasicMaterial({
+  color: 0x4effb8, transparent: true, opacity: 0.06,
+  blending: THREE.AdditiveBlending
+})
+const halo = new THREE.Mesh(haloGeo, haloMat)
+playerGroup.add(halo)
+
+playerGroup.position.set(playerStart.x, 0.45, playerStart.z)
+scene.add(playerGroup)
+
+// ======================= 粒子 =======================
+const pCount = 300
+const pGeo = new THREE.BufferGeometry()
+const pPos = new Float32Array(pCount*3)
+const pCol = new Float32Array(pCount*3)
+const pSizes = new Float32Array(pCount)
+for (let i=0; i<pCount; i++) {
+  pPos[i*3] = (Math.random()-0.5)*30
+  pPos[i*3+1] = Math.random()*12
+  pPos[i*3+2] = (Math.random()-0.5)*30
+  const c = new THREE.Color().setHSL(0.55+Math.random()*0.2, 0.6, 0.3+Math.random()*0.4)
+  pCol[i*3]=c.r; pCol[i*3+1]=c.g; pCol[i*3+2]=c.b
+  pSizes[i] = 0.04+Math.random()*0.08
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3))
+pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3))
+pGeo.setAttribute('size', new THREE.BufferAttribute(pSizes, 1))
+const pMat = new THREE.PointsMaterial({
+  size: 0.07, vertexColors: true, transparent: true, opacity: 0.5,
+  blending: THREE.AdditiveBlending, depthWrite: false
+})
+const particles = new THREE.Points(pGeo, pMat)
+scene.add(particles)
+
+// ======================= 光线系统 =======================
+const MAX_BOUNCES = 8
+const STEP_SIZE = 0.04
+const MAX_STEPS = 1800
+
+// 光线可视化
+let rayLines = []
+const rayMat = new THREE.LineBasicMaterial({
+  color: 0x4effb8, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending
+})
+const rayMatBright = new THREE.LineBasicMaterial({
+  color: 0x88ffdd, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending
+})
+const rayMatColors = [
+  new THREE.LineBasicMaterial({ color: 0x4effb8, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending }),
+  new THREE.LineBasicMaterial({ color: 0xff88dd, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending }),
+  new THREE.LineBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending }),
+  new THREE.LineBasicMaterial({ color: 0xddff88, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending }),
+]
+
+function clearRays() {
+  for (const l of rayLines) {
+    scene.remove(l)
+    l.geometry.dispose()
+  }
+  rayLines = []
+}
+
+function updateRays(segments) {
+  clearRays()
+  for (const seg of segments) {
+    const pts = seg.points
+    if (pts.length < 2) continue
+    const geo = new THREE.BufferGeometry().setFromPoints(pts)
+    const mat = seg.bright ? rayMatBright : (rayMatColors[seg.colorIdx % rayMatColors.length] || rayMat)
+    const line = new THREE.Line(geo, mat)
+    scene.add(line)
+    rayLines.push(line)
+  }
+}
+
+// ======================= 光线追踪 =======================
+function traceRay(startX, startZ, dirX, dirZ) {
+  const segments = []
+  let x = startX, z = startZ
+  let dx = dirX, dz = dirZ
+  const len = Math.sqrt(dx*dx + dz*dz)
+  if (len < 0.001) return segments
+  dx /= len; dz /= len
+
+  let bounces = 0
+  let currentPts = [new THREE.Vector3(x, 0.35, z)]
+  let colorIdx = 0
+  let bright = true
+
+  while (bounces <= MAX_BOUNCES) {
+    let hit = false
+    let steps = 0
+    let lastGoodX = x, lastGoodZ = z
+
+    while (steps < MAX_STEPS) {
+      x += dx * STEP_SIZE
+      z += dz * STEP_SIZE
+      steps++
+
+      // 边界检查
+      if (x < 0 || x >= COLS || z < 0 || z >= ROWS) {
+        // 出界
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+        hit = true
+        break
+      }
+
+      const gx = Math.floor(x)
+      const gz = Math.floor(z)
+      if (gx < 0 || gx >= COLS || gz < 0 || gz >= ROWS) {
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+        hit = true
+        break
+      }
+
+      const cell = map[gz][gx]
+
+      if (cell === 1) {
+        // 墙壁
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+        hit = true
+        break
+      } else if (cell === 2) {
+        // 镜面反射
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+        const dirData = mirrorDirs[`${gz},${gx}`] || 0
+        // 计算法线
+        let nx = 0, nz = 0
+        if (dirData === 0) { // 水平镜面 (沿X轴) 法线Z
+          nz = (dz > 0) ? -1 : 1
+        } else { // 垂直镜面 (沿Z轴) 法线X
+          nx = (dx > 0) ? -1 : 1
+        }
+        const dot = dx*nx + dz*nz
+        dx = dx - 2*dot*nx
+        dz = dz - 2*dot*nz
+        // 微调位置避免卡住
+        x += dx * 0.08
+        z += dz * 0.08
+        bounces++
+        // 保存当前段
+        if (currentPts.length > 1) {
+          segments.push({ points: currentPts, bright, colorIdx })
+        }
+        // 新段
+        currentPts = [new THREE.Vector3(x, 0.35, z)]
+        bright = !bright
+        colorIdx = (colorIdx + 1) % rayMatColors.length
+        hit = false
+        break
+      } else if (cell === 3) {
+        // 棱镜折射
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+        const dirData = prismDirs[`${gz},${gx}`] || 0
+        // 折射偏移
+        if (dirData === 0) {
+          // 水平偏移: 偏Z
+          dz = -dz + (Math.random()-0.5)*0.1
+        } else {
+          // 垂直偏移: 偏X
+          dx = -dx + (Math.random()-0.5)*0.1
+        }
+        const l = Math.sqrt(dx*dx+dz*dz)
+        if (l > 0.001) { dx/=l; dz/=l }
+        x += dx * 0.08
+        z += dz * 0.08
+        bounces++
+        if (currentPts.length > 1) {
+          segments.push({ points: currentPts, bright, colorIdx })
+        }
+        currentPts = [new THREE.Vector3(x, 0.35, z)]
+        bright = !bright
+        colorIdx = (colorIdx + 2) % rayMatColors.length
+        hit = false
+        break
+      } else if (cell === 4) {
+        // 核心 - 点亮它
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+        // 找到核心
+        for (const core of coreMeshes) {
+          if (core.gridX === gx && core.gridZ === gz && !core.lit) {
+            core.lit = true
+            core.mat.color.copy(core.color)
+            core.mat.emissive.copy(core.color)
+            core.mat.emissiveIntensity = 0.6
+            core.ringMat.color.copy(core.color)
+            core.ringMat.opacity = 0.6
+            updateScore()
+          }
+        }
+        // 继续传播（穿过核心）
+        if (currentPts.length > 1) {
+          segments.push({ points: currentPts, bright, colorIdx })
+        }
+        currentPts = [new THREE.Vector3(x, 0.35, z)]
+        hit = false
+        break
+      }
+
+      // 空地 - 继续
+      if (steps % 20 === 0) {
+        currentPts.push(new THREE.Vector3(x, 0.35, z))
+      }
+    }
+
+    if (hit) {
+      if (currentPts.length > 1) {
+        segments.push({ points: currentPts, bright, colorIdx })
+      }
+      break
+    }
+
+    if (steps >= MAX_STEPS) {
+      if (currentPts.length > 1) {
+        segments.push({ points: currentPts, bright, colorIdx })
+      }
+      break
+    }
+
+    // 如果bounces增加但没break，继续循环
+  }
+
+  return segments
+}
+
+// ======================= 输入 =======================
+const keys = {}
+let touchX = null, touchY = null
+let mouseX = 0, mouseY = 0
+let targetAngle = 0
+
+document.addEventListener('keydown', e => { keys[e.key] = true
+  if ((e.key==='r'||e.key==='R') && (gameOver||gameWon)) restart()
+})
+document.addEventListener('keyup', e => { keys[e.key] = false })
+
+renderer.domElement.addEventListener('mousemove', e => {
+  mouseX = (e.clientX / window.innerWidth) * 2 - 1
+  mouseY = (e.clientY / window.innerHeight) * 2 - 1
+})
+
+renderer.domElement.addEventListener('touchstart', e => {
+  const t = e.touches[0]
+  touchX = t.clientX; touchY = t.clientY
+  mouseX = (touchX / window.innerWidth)*2-1
+  mouseY = (touchY / window.innerHeight)*2-1
+})
+renderer.domElement.addEventListener('touchmove', e => {
+  e.preventDefault()
+  const t = e.touches[0]
+  touchX = t.clientX; touchY = t.clientY
+  mouseX = (touchX / window.innerWidth)*2-1
+  mouseY = (touchY / window.innerHeight)*2-1
+})
+renderer.domElement.addEventListener('touchend', () => { touchX=null; touchY=null })
+
+renderer.domElement.addEventListener('dblclick', () => {
+  if (gameOver || gameWon) restart()
+})
+
+// ======================= 游戏状态 =======================
+let score = 0
+let hp = 3
+let maxHp = 3
+let gameOver = false
+let gameWon = false
+let lightActive = true
+let totalCores = coreMeshes.length
+let litCores = 0
+
+const scoreEl = document.getElementById('score')
+const hpEl = document.getElementById('hp')
+const msgEl = document.getElementById('msg')
+
+function updateScore() {
+  litCores = coreMeshes.filter(c => c.lit).length
+  scoreEl.textContent = `⚡ ${litCores} / ${totalCores}`
+  if (litCores >= totalCores && !gameOver && !gameWon) {
+    gameWon = true
+    showMsg('✨ 通关！ ✨', `所有能量核心已点亮！  按 R 重新开始`)
+  }
+}
+
+function updateHp() {
+  hpEl.textContent = '💡 '.repeat(Math.max(0, hp))
+}
+
+function showMsg(text, sub) {
+  msgEl.style.display = 'block'
+  msgEl.innerHTML = text + (sub ? `<small>${sub}</small>` : '')
+}
+
+function hideMsg() { msgEl.style.display = 'none' }
+
+function restart() {
+  playerGroup.position.set(playerStart.x, 0.45, playerStart.z)
+  hp = maxHp
+  gameOver = false
+  gameWon = false
+  litCores = 0
+  for (const core of coreMeshes) {
+    core.lit = false
+    core.mat.color.setHex(0x888888)
+    core.mat.emissive.setHex(0x444444)
+    core.mat.emissiveIntensity = 0.1
+    core.ringMat.color.setHex(0x666688)
+    core.ringMat.opacity = 0.2
+  }
+  updateScore()
+  updateHp()
+  hideMsg()
+  clearRays()
+}
+
+// ======================= 更新 =======================
+const PLAYER_SPEED = 5.5
+const BOUND_X = COLS - 0.5
+const BOUND_Z = ROWS - 0.5
+
+function update(dt) {
+  if (gameOver || gameWon) {
+    // 仍然更新粒子
+    updateParticles(dt)
+    return
+  }
+
+  // 移动
+  let mx = 0, mz = 0
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) mx = -1
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) mx = 1
+  if (keys['ArrowUp'] || keys['w'] || keys['W']) mz = -1
+  if (keys['ArrowDown'] || keys['s'] || keys['S']) mz = 1
+
+  // 触摸移动（虚拟摇杆简化）
+  if (touchX !== null && touchY !== null) {
+    const cx = window.innerWidth/2, cy = window.innerHeight/2
+    const dx = (touchX - cx)/cx, dy = (touchY - cy)/cy
+    if (Math.abs(dx) > 0.12) mx = dx
+    if (Math.abs(dy) > 0.12) mz = dy
+  }
+
+  if (mx !== 0 && mz !== 0) { const l = 1/Math.sqrt(mx*mx+mz*mz); mx*=l; mz*=l }
+
+  let newX = playerGroup.position.x + mx * PLAYER_SPEED * dt
+  let newZ = playerGroup.position.z + mz * PLAYER_SPEED * dt
+  newX = Math.max(0.4, Math.min(BOUND_X-0.4, newX))
+  newZ = Math.max(0.4, Math.min(BOUND_Z-0.4, newZ))
+
+  // 碰撞检测（墙壁）
+  let canMove = true
+  const checkPositions = [
+    {x: newX, z: newZ},
+    {x: newX, z: playerGroup.position.z},
+    {x: playerGroup.position.x, z: newZ}
+  ]
+  for (const cp of checkPositions) {
+    const gx = Math.floor(cp.x), gz = Math.floor(cp.z)
+    if (gx >= 0 && gx < COLS && gz >= 0 && gz < ROWS && map[gz][gx] === 1) {
+      canMove = false
+      break
+    }
+  }
+  if (canMove) {
+    playerGroup.position.x = newX
+    playerGroup.position.z = newZ
+  }
+
+  // 玩家旋转（面向鼠标方向）
+  const angle = Math.atan2(mouseX, -mouseY)
+  if (!isNaN(angle)) playerGroup.rotation.y = angle
+
+  // 玩家浮动
+  const bob = Math.sin(Date.now()/600)*0.04
+  playerBody.position.y = bob
+  playerGlow.scale.setScalar(1 + Math.sin(Date.now()/500)*0.03)
+
+  // 光线方向
+  const dirX = Math.sin(angle)
+  const dirZ = -Math.cos(angle)
+
+  // 追踪光线
+  const segments = traceRay(playerGroup.position.x, playerGroup.position.z, dirX, dirZ)
+  updateRays(segments)
+
+  // 检查核心状态
+  updateScore()
+
+  // 更新棱镜旋转
+  for (const p of prismMeshes) {
+    p.mesh.rotation.x += dt * 1.2
+    p.mesh.rotation.y += dt * 1.8
+    p.mesh.position.y = 0.5 + Math.sin(Date.now()/400 + p.phase) * 0.08
+  }
+
+  // 更新核心动画
+  for (const core of coreMeshes) {
+    if (core.lit) {
+      core.mesh.position.y = 0.4 + Math.sin(Date.now()/300 + core.gridX + core.gridZ) * 0.08
+      core.ring.rotation.z += dt * 1.5
+      core.ring.scale.setScalar(1 + Math.sin(Date.now()/400)*0.1)
+    }
+  }
+
+  // 更新粒子
+  updateParticles(dt)
+
+  // 相机跟随
+  const tx = playerGroup.position.x
+  const tz = playerGroup.position.z
+  camera.position.x += (tx - camera.position.x) * dt * 1.8
+  camera.position.z += (tz + 18 - camera.position.z) * dt * 1.8
+  camera.lookAt(tx, 0, tz)
+}
+
+function updateParticles(dt) {
+  const pos = particles.geometry.attributes.position.array
+  for (let i=0; i<pCount; i++) {
+    pos[i*3+1] += Math.sin(Date.now()/800 + i*0.5) * dt * 0.015
+    if (pos[i*3+1] > 12) pos[i*3+1] = 0
+    if (pos[i*3+1] < 0) pos[i*3+1] = 12
+  }
+  particles.geometry.attributes.position.needsUpdate = true
+}
+
+// ======================= 游戏循环 =======================
+let lastTime = 0
+
+function animate(time) {
+  const dt = Math.min((time - lastTime)/1000, 0.05)
+  lastTime = time
+  update(dt)
+  renderer.render(scene, camera)
+  requestAnimationFrame(animate)
+}
+
+animate(0)
+
+// ======================= 窗口自适应 =======================
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(window.innerWidth, window.innerHeight)
+})
+
+// ======================= 初始状态 =======================
+updateScore()
+updateHp()
+hideMsg()
+
+// 小提示：显示操作说明
+setTimeout(() => {
+  const info = document.getElementById('info')
+  if (info) info.style.opacity = '0.5'
+}, 8000)
+
+console.log('🌟 光之迷宫 - 操控光线，点亮所有能量核心！')
+console.log('WASD移动 · 鼠标/触摸控制光线方向 · 镜面反射 · 棱镜折射')
+</script>
+</body>
+</html>

@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>推消乐 - 推动三消</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d0d1a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; }
+canvas { display: block; background: #0d0d1a; box-shadow: 0 0 60px rgba(78, 204, 163, 0.15); border-radius: 16px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+const W = 540, H = 720
+canvas.width = W
+canvas.height = H
+
+// --- 游戏配置 ---
+const ROWS = 6
+const COLS = 6
+const COLORS = [
+  { name: 'red',    fill: '#FF4757', light: '#FF7A8A', dark: '#C0392B' },
+  { name: 'blue',   fill: '#2ED573', light: '#5EEA8A', dark: '#1E8C4A' },
+  { name: 'yellow', fill: '#FFA502', light: '#FFBE44', dark: '#CC8400' },
+  { name: 'purple', fill: '#A55EEA', light: '#C28EFF', dark: '#7C3EBD' }
+]
+const MAX_MOVES = 30
+const TILE_SIZE = 68
+const GAP = 6
+const GRID_W = COLS * (TILE_SIZE + GAP) + GAP
+const GRID_H = ROWS * (TILE_SIZE + GAP) + GAP
+const GRID_X = (W - GRID_W) / 2
+const GRID_Y = 110
+
+// --- 按钮区域 ---
+const BTN_CENTER = { x: W / 2, y: GRID_Y + GRID_H + 70 }
+const BTN_RADIUS = 38
+const BTN_GAP = 16
+const btnUp    = { x: BTN_CENTER.x, y: BTN_CENTER.y - BTN_RADIUS - BTN_GAP, r: BTN_RADIUS }
+const btnDown  = { x: BTN_CENTER.x, y: BTN_CENTER.y + BTN_RADIUS + BTN_GAP, r: BTN_RADIUS }
+const btnLeft  = { x: BTN_CENTER.x - BTN_RADIUS - BTN_GAP, y: BTN_CENTER.y, r: BTN_RADIUS }
+const btnRight = { x: BTN_CENTER.x + BTN_RADIUS + BTN_GAP, y: BTN_CENTER.y, r: BTN_RADIUS }
+const btnRestart = { x: W / 2, y: BTN_CENTER.y + BTN_RADIUS * 2 + BTN_GAP + 50, w: 140, h: 44 }
+
+// --- 状态 ---
+let grid = []
+let selectedRow = -1
+let selectedCol = -1
+let moves = 0
+let score = 0
+let gameState = 'ready' // 'ready' | 'playing' | 'won' | 'lost'
+let isAnimating = false
+let animQueue = []
+let tilesLeft = ROWS * COLS
+
+// --- 音效 (用振荡器模拟) ---
+let audioCtx = null
+function playSound(freq, duration, type = 'sine', vol = 0.12) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.type = type
+    osc.frequency.value = freq
+    gain.gain.value = vol
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration)
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.start()
+    osc.stop(audioCtx.currentTime + duration)
+  } catch(e) {}
+}
+
+// --- 工具 ---
+function rand(n) { return Math.floor(Math.random() * n) }
+
+// --- 网格操作 ---
+function createGrid() {
+  grid = []
+  for (let r = 0; r < ROWS; r++) {
+    grid[r] = []
+    for (let c = 0; c < COLS; c++) {
+      grid[r][c] = rand(COLORS.length)
+    }
+  }
+  // 消除初始三消，直到稳定
+  let stable = false
+  while (!stable) {
+    const matches = findMatches()
+    if (matches.size === 0) { stable = true; break }
+    for (const idx of matches) {
+      const r = Math.floor(idx / COLS)
+      const c = idx % COLS
+      grid[r][c] = rand(COLORS.length)
+    }
+  }
+  updateTilesLeft()
+}
+
+function updateTilesLeft() {
+  let count = 0
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (grid[r][c] >= 0) count++
+  tilesLeft = count
+}
+
+function findMatches() {
+  const matched = new Set()
+  // 横向
+  for (let r = 0; r < ROWS; r++) {
+    let c = 0
+    while (c < COLS) {
+      if (grid[r][c] < 0) { c++; continue }
+      let end = c
+      while (end + 1 < COLS && grid[r][end+1] === grid[r][c]) end++
+      if (end - c >= 2) {
+        for (let i = c; i <= end; i++) matched.add(r * COLS + i)
+      }
+      c = end + 1
+    }
+  }
+  // 纵向
+  for (let c = 0; c < COLS; c++) {
+    let r = 0
+    while (r < ROWS) {
+      if (grid[r][c] < 0) { r++; continue }
+      let end = r
+      while (end + 1 < ROWS && grid[end+1][c] === grid[r][c]) end++
+      if (end - r >= 2) {
+        for (let i = r; i <= end; i++) matched.add(i * COLS + c)
+      }
+      r = end + 1
+    }
+  }
+  return matched
+}
+
+function applyGravity() {
+  let changed = false
+  for (let c = 0; c < COLS; c++) {
+    let writeRow = ROWS - 1
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (grid[r][c] >= 0) {
+        if (writeRow !== r) {
+          grid[writeRow][c] = grid[r][c]
+          grid[r][c] = -1
+          changed = true
+        }
+        writeRow--
+      }
+    }
+  }
+  return changed
+}
+
+function tryPush(row, col, dr, dc) {
+  const nr = row + dr
+  const nc = col + dc
+  if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) return false
+  if (grid[nr][nc] < 0) {
+    // 目标为空，移动
+    grid[nr][nc] = grid[row][col]
+    grid[row][col] = -1
+    selectedRow = nr
+    selectedCol = nc
+    return true
+  } else {
+    // 目标有方块，尝试推动
+    if (tryPush(nr, nc, dr, dc)) {
+      grid[nr][nc] = grid[row][col]
+      grid[row][col] = -1
+      selectedRow = nr
+      selectedCol = nc
+      return true
+    }
+    return false
+  }
+}
+
+function processMatches() {
+  let combo = 0
+  let totalEliminated = 0
+
+  function step() {
+    const matches = findMatches()
+    if (matches.size === 0) return totalEliminated
+
+    combo++
+    const pts = matches.size * 10 * combo
+    score += pts
+    totalEliminated += matches.size
+
+    // 消除
+    for (const idx of matches) {
+      const r = Math.floor(idx / COLS)
+      const c = idx % COLS
+      grid[r][c] = -1
+    }
+
+    // 音效
+    playSound(400 + combo * 80, 0.1, 'sine', 0.08)
+
+    // 重力下落
+    applyGravity()
+    updateTilesLeft()
+
+    // 如果还有匹配，继续
+    return step()
+  }
+
+  return step()
+}
+
+function checkGameOver() {
+  if (tilesLeft === 0) {
+    gameState = 'won'
+    playSound(880, 0.3, 'sine', 0.1)
+    playSound(1100, 0.3, 'sine', 0.08)
+    return true
+  }
+  if (moves >= MAX_MOVES) {
+    gameState = 'lost'
+    playSound(200, 0.4, 'sawtooth', 0.06)
+    return true
+  }
+  return false
+}
+
+function restartGame() {
+  createGrid()
+  selectedRow = -1
+  selectedCol = -1
+  moves = 0
+  score = 0
+  gameState = 'ready'
+  isAnimating = false
+  animQueue = []
+  updateTilesLeft()
+}
+
+// --- 输入处理 ---
+function handleClick(mx, my) {
+  if (isAnimating) return
+  if (gameState === 'won' || gameState === 'lost') {
+    // 点击重新开始
+    if (mx >= btnRestart.x - btnRestart.w/2 && mx <= btnRestart.x + btnRestart.w/2 &&
+        my >= btnRestart.y - btnRestart.h/2 && my <= btnRestart.y + btnRestart.h/2) {
+      restartGame()
+      return
+    }
+    return
+  }
+
+  // 检查方向按钮
+  const btns = [
+    { b: btnUp,    dr: -1, dc: 0 },
+    { b: btnDown,  dr: 1,  dc: 0 },
+    { b: btnLeft,  dr: 0,  dc: -1 },
+    { b: btnRight, dr: 0,  dc: 1 }
+  ]
+  for (const { b, dr, dc } of btns) {
+    const dx = mx - b.x
+    const dy = my - b.y
+    if (dx*dx + dy*dy <= b.r * b.r) {
+      if (selectedRow < 0 || selectedCol < 0) {
+        // 未选中任何方块，尝试自动选择
+        return
+      }
+      if (grid[selectedRow][selectedCol] < 0) {
+        selectedRow = -1
+        selectedCol = -1
+        return
+      }
+      // 尝试推动
+      const oldGrid = grid.map(row => [...row])
+      const success = tryPush(selectedRow, selectedCol, dr, dc)
+      if (success) {
+        moves++
+        if (gameState === 'ready') gameState = 'playing'
+        playSound(300, 0.06, 'sine', 0.06)
+        const eliminated = processMatches()
+        updateTilesLeft()
+        if (!checkGameOver()) {
+          // 如果没结束，取消选中
+          if (selectedRow >= 0 && selectedCol >= 0 && grid[selectedRow][selectedCol] < 0) {
+            selectedRow = -1
+            selectedCol = -1
+          }
+        }
+      } else {
+        playSound(150, 0.1, 'square', 0.04)
+      }
+      return
+    }
+  }
+
+  // 检查重新开始按钮
+  if (mx >= btnRestart.x - btnRestart.w/2 && mx <= btnRestart.x + btnRestart.w/2 &&
+      my >= btnRestart.y - btnRestart.h/2 && my <= btnRestart.y + btnRestart.h/2) {
+    restartGame()
+    return
+  }
+
+  // 点击网格 - 选中/取消选中
+  const gx = (mx - GRID_X)
+  const gy = (my - GRID_Y)
+  if (gx >= 0 && gy >= 0 && gx < GRID_W && gy < GRID_H) {
+    const col = Math.floor(gx / (TILE_SIZE + GAP))
+    const row = Math.floor(gy / (TILE_SIZE + GAP))
+    if (row < ROWS && col < COLS && grid[row][col] >= 0) {
+      if (selectedRow === row && selectedCol === col) {
+        selectedRow = -1
+        selectedCol = -1
+      } else {
+        selectedRow = row
+        selectedCol = col
+        playSound(500, 0.05, 'sine', 0.05)
+      }
+    } else {
+      selectedRow = -1
+      selectedCol = -1
+    }
+    return
+  }
+
+  selectedRow = -1
+  selectedCol = -1
+}
+
+// --- 绘制 ---
+function draw() {
+  ctx.clearRect(0, 0, W, H)
+
+  // 背景装饰
+  const grad = ctx.createRadialGradient(W/2, H/2, 100, W/2, H/2, 500)
+  grad.addColorStop(0, '#1a1a3e')
+  grad.addColorStop(1, '#0d0d1a')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, W, H)
+
+  // 标题
+  ctx.fillStyle = '#4ecca3'
+  ctx.font = 'bold 32px "Segoe UI", sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'top'
+  ctx.shadowColor = 'rgba(78, 204, 163, 0.3)'
+  ctx.shadowBlur = 20
+  ctx.fillText('推消乐', W/2, 20)
+  ctx.shadowBlur = 0
+
+  // 副标题
+  ctx.fillStyle = '#8899aa'
+  ctx.font = '14px sans-serif'
+  ctx.textBaseline = 'top'
+  ctx.fillText('推动方块 · 三消消除 · 步数规划', W/2, 62)
+
+  // 信息栏
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  ctx.fillStyle = '#ccddee'
+  ctx.font = 'bold 18px sans-serif'
+  ctx.fillText(`步数: ${moves}/${MAX_MOVES}`, GRID_X, GRID_Y - 32)
+  ctx.textAlign = 'right'
+  ctx.fillText(`分数: ${score}`, GRID_X + GRID_W, GRID_Y - 32)
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#aabbcc'
+  ctx.font = '14px sans-serif'
+  ctx.fillText(`剩余: ${tilesLeft} 块`, GRID_X + GRID_W/2, GRID_Y - 32)
+
+  // 网格背景
+  ctx.shadowColor = 'rgba(78, 204, 163, 0.08)'
+  ctx.shadowBlur = 30
+  ctx.fillStyle = '#12122a'
+  ctx.beginPath()
+  ctx.roundRect(GRID_X - 8, GRID_Y - 8, GRID_W + 16, GRID_H + 16, 12)
+  ctx.fill()
+  ctx.shadowBlur = 0
+
+  // 绘制网格
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = GRID_X + c * (TILE_SIZE + GAP) + GAP
+      const y = GRID_Y + r * (TILE_SIZE + GAP) + GAP
+      const val = grid[r][c]
+
+      if (val < 0) {
+        // 空位
+        ctx.fillStyle = '#1a1a35'
+        ctx.beginPath()
+        ctx.roundRect(x, y, TILE_SIZE, TILE_SIZE, 8)
+        ctx.fill()
+        continue
+      }
+
+      const color = COLORS[val]
+      const isSelected = (r === selectedRow && c === selectedCol)
+
+      // 方块阴影
+      ctx.shadowColor = 'rgba(0,0,0,0.3)'
+      ctx.shadowBlur = 10
+      ctx.shadowOffsetY = 4
+
+      // 主体
+      const grad2 = ctx.createLinearGradient(x, y, x, y + TILE_SIZE)
+      grad2.addColorStop(0, color.light)
+      grad2.addColorStop(0.3, color.fill)
+      grad2.addColorStop(1, color.dark)
+      ctx.fillStyle = grad2
+      ctx.beginPath()
+      ctx.roundRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4, 8)
+      ctx.fill()
+
+      ctx.shadowBlur = 0
+      ctx.shadowOffsetY = 0
+
+      // 高光
+      ctx.fillStyle = 'rgba(255,255,255,0.15)'
+      ctx.beginPath()
+      ctx.roundRect(x + 6, y + 4, TILE_SIZE - 20, (TILE_SIZE - 8) * 0.35, 4)
+      ctx.fill()
+
+      // 选中边框
+      if (isSelected) {
+        ctx.shadowColor = 'rgba(78, 204, 163, 0.6)'
+        ctx.shadowBlur = 20
+        ctx.strokeStyle = '#4ecca3'
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.roundRect(x + 1, y + 1, TILE_SIZE - 2, TILE_SIZE - 2, 10)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+      }
+
+      // 颜色标记小圆
+      ctx.fillStyle = 'rgba(255,255,255,0.2)'
+      ctx.beginPath()
+      ctx.arc(x + TILE_SIZE - 14, y + 14, 6, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+
+  // --- 方向按钮 ---
+  const btns = [
+    { b: btnUp,    label: '↑', enabled: selectedRow >= 0 && selectedCol >= 0 && grid[selectedRow]?.[selectedCol] >= 0 },
+    { b: btnDown,  label: '↓', enabled: selectedRow >= 0 && selectedCol >= 0 && grid[selectedRow]?.[selectedCol] >= 0 },
+    { b: btnLeft,  label: '←', enabled: selectedRow >= 0 && selectedCol >= 0 && grid[selectedRow]?.[selectedCol] >= 0 },
+    { b: btnRight, label: '→', enabled: selectedRow >= 0 && selectedCol >= 0 && grid[selectedRow]?.[selectedCol] >= 0 }
+  ]
+
+  for (const { b, label, enabled } of btns) {
+    const isActive = enabled && (gameState === 'playing' || gameState === 'ready') && !isAnimating
+    ctx.shadowColor = isActive ? 'rgba(78, 204, 163, 0.2)' : 'transparent'
+    ctx.shadowBlur = 20
+
+    // 按钮背景
+    const grad3 = ctx.createRadialGradient(b.x - 6, b.y - 6, 2, b.x, b.y, b.r)
+    if (isActive) {
+      grad3.addColorStop(0, '#2a3a5a')
+      grad3.addColorStop(1, '#1a2a4a')
+    } else {
+      grad3.addColorStop(0, '#1a1a30')
+      grad3.addColorStop(1, '#0f0f20')
+    }
+    ctx.fillStyle = grad3
+    ctx.beginPath()
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.shadowBlur = 0
+
+    // 边框
+    ctx.strokeStyle = isActive ? 'rgba(78, 204, 163, 0.4)' : 'rgba(255,255,255,0.08)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(b.x, b.y, b.r - 2, 0, Math.PI * 2)
+    ctx.stroke()
+
+    // 文字
+    ctx.fillStyle = isActive ? '#ffffff' : '#555577'
+    ctx.font = 'bold 28px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, b.x, b.y + 1)
+  }
+
+  // 重新开始按钮
+  const isRestartActive = !isAnimating
+  ctx.shadowColor = 'rgba(78, 204, 163, 0.1)'
+  ctx.shadowBlur = 15
+  ctx.fillStyle = '#1a2a3a'
+  ctx.beginPath()
+  ctx.roundRect(btnRestart.x - btnRestart.w/2, btnRestart.y - btnRestart.h/2, btnRestart.w, btnRestart.h, 10)
+  ctx.fill()
+  ctx.shadowBlur = 0
+  ctx.strokeStyle = 'rgba(78, 204, 163, 0.3)'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.roundRect(btnRestart.x - btnRestart.w/2, btnRestart.y - btnRestart.h/2, btnRestart.w, btnRestart.h, 10)
+  ctx.stroke()
+  ctx.fillStyle = '#4ecca3'
+  ctx.font = 'bold 16px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('重新开始', btnRestart.x, btnRestart.y + 1)
+
+  // --- 游戏结束覆盖层 ---
+  if (gameState === 'won') {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'
+    ctx.fillRect(0, 0, W, H)
+    ctx.shadowColor = 'rgba(78, 204, 163, 0.5)'
+    ctx.shadowBlur = 40
+    ctx.fillStyle = '#4ecca3'
+    ctx.font = 'bold 48px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('🎉 通关！', W/2, H/2 - 60)
+    ctx.shadowBlur = 0
+    ctx.fillStyle = '#ccddee'
+    ctx.font = '22px sans-serif'
+    ctx.fillText(`分数: ${score}  步数: ${moves}`, W/2, H/2 + 10)
+    ctx.fillStyle = '#8899aa'
+    ctx.font = '16px sans-serif'
+    ctx.fillText('点击「重新开始」再来一局', W/2, H/2 + 60)
+  } else if (gameState === 'lost') {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'
+    ctx.fillRect(0, 0, W, H)
+    ctx.shadowColor = 'rgba(255, 71, 87, 0.4)'
+    ctx.shadowBlur = 40
+    ctx.fillStyle = '#FF4757'
+    ctx.font = 'bold 48px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('步数用尽', W/2, H/2 - 60)
+    ctx.shadowBlur = 0
+    ctx.fillStyle = '#ccddee'
+    ctx.font = '22px sans-serif'
+    ctx.fillText(`最终分数: ${score}  剩余: ${tilesLeft} 块`, W/2, H/2 + 10)
+    ctx.fillStyle = '#8899aa'
+    ctx.font = '16px sans-serif'
+    ctx.fillText('点击「重新开始」再来一局', W/2, H/2 + 60)
+  }
+
+  // 底部提示
+  if (gameState === 'ready' && selectedRow < 0) {
+    ctx.fillStyle = 'rgba(78, 204, 163, 0.3)'
+    ctx.font = '14px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText('点击方块选中，再按方向键推动', W/2, H - 12)
+  }
+}
+
+// --- roundRect polyfill ---
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    if (r > w/2) r = w/2
+    if (r > h/2) r = h/2
+    this.moveTo(x + r, y)
+    this.lineTo(x + w - r, y)
+    this.quadraticCurveTo(x + w, y, x + w, y + r)
+    this.lineTo(x + w, y + h - r)
+    this.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    this.lineTo(x + r, y + h)
+    this.quadraticCurveTo(x, y + h, x, y + h - r)
+    this.lineTo(x, y + r)
+    this.quadraticCurveTo(x, y, x + r, y)
+    this.closePath()
+  }
+}
+
+// --- 事件绑定 ---
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect()
+  const scaleX = canvas.width / rect.width
+  const scaleY = canvas.height / rect.height
+  const mx = (e.clientX - rect.left) * scaleX
+  const my = (e.clientY - rect.top) * scaleY
+  handleClick(mx, my)
+})
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault()
+  const t = e.changedTouches[0]
+  const rect = canvas.getBoundingClientRect()
+  const scaleX = canvas.width / rect.width
+  const scaleY = canvas.height / rect.height
+  const mx = (t.clientX - rect.left) * scaleX
+  const my = (t.clientY - rect.top) * scaleY
+  // 存下来用于 touchend
+  canvas._touchX = mx
+  canvas._touchY = my
+}, { passive: false })
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault()
+  if (canvas._touchX !== undefined && canvas._touchY !== undefined) {
+    handleClick(canvas._touchX, canvas._touchY)
+    canvas._touchX = undefined
+    canvas._touchY = undefined
+  }
+}, { passive: false })
+
+// 键盘支持
+document.addEventListener('keydown', e => {
+  if (isAnimating) return
+  if (gameState === 'won' || gameState === 'lost') {
+    if (e.key === 'r' || e.key === 'R') restartGame()
+    return
+  }
+  if (selectedRow < 0 || selectedCol < 0 || grid[selectedRow][selectedCol] < 0) return
+
+  let dr = 0, dc = 0
+  if (e.key === 'ArrowUp')    { dr = -1; dc = 0 }
+  else if (e.key === 'ArrowDown')  { dr = 1; dc = 0 }
+  else if (e.key === 'ArrowLeft')  { dr = 0; dc = -1 }
+  else if (e.key === 'ArrowRight') { dr = 0; dc = 1 }
+  else return
+  e.preventDefault()
+
+  const success = tryPush(selectedRow, selectedCol, dr, dc)
+  if (success) {
+    moves++
+    if (gameState === 'ready') gameState = 'playing'
+    playSound(300, 0.06, 'sine', 0.06)
+    processMatches()
+    updateTilesLeft()
+    checkGameOver()
+    if (selectedRow >= 0 && selectedCol >= 0 && grid[selectedRow][selectedCol] < 0) {
+      selectedRow = -1
+      selectedCol = -1
+    }
+  } else {
+    playSound(150, 0.1, 'square', 0.04)
+  }
+})
+
+// --- 游戏循环 ---
+function gameLoop() {
+  draw()
+  requestAnimationFrame(gameLoop)
+}
+
+// --- 初始化 ---
+restartGame()
+gameLoop()
+
+// --- 响应式 ---
+function resize() {
+  const maxW = window.innerWidth - 20
+  const maxH = window.innerHeight - 20
+  const scale = Math.min(maxW / W, maxH / H)
+  canvas.style.width = (W * scale) + 'px'
+  canvas.style.height = (H * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+</script>
+</body>
+</html>

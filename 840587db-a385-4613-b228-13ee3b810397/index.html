@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>光束迷阵 · 晶核觉醒</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: #0a0a1a;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            padding: 14px 18px;
+        }
+        #top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+        }
+        #score,
+        #hp {
+            color: #fff;
+            font-size: 17px;
+            text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+            background: rgba(0, 0, 0, 0.45);
+            padding: 6px 14px;
+            border-radius: 30px;
+            backdrop-filter: blur(4px);
+            letter-spacing: 0.3px;
+        }
+        #hp {
+            color: #ffd93d;
+        }
+        #score span {
+            color: #6bcbff;
+        }
+
+        #mirror-controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            pointer-events: auto;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px 16px 8px 20px;
+            border-radius: 50px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        }
+        #mirror-controls .label {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            margin-right: 4px;
+        }
+        #mirror-controls .mirror-id {
+            color: #fff;
+            font-weight: 600;
+            font-size: 16px;
+            min-width: 28px;
+            text-align: center;
+        }
+        #mirror-controls button {
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: manipulation;
+        }
+        #mirror-controls button:active {
+            transform: scale(0.92);
+            background: rgba(255, 255, 255, 0.18);
+        }
+        #mirror-controls button:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+        #mirror-controls .nav-btn {
+            width: 36px;
+            height: 36px;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+        #mirror-controls .nav-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        #msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 34px;
+            font-weight: 700;
+            text-align: center;
+            text-shadow: 0 6px 40px rgba(0, 0, 0, 0.95);
+            pointer-events: none;
+            display: none;
+            background: rgba(0, 0, 0, 0.55);
+            padding: 28px 44px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            line-height: 1.5;
+        }
+        #msg small {
+            display: block;
+            font-size: 16px;
+            font-weight: 400;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 10px;
+        }
+
+        @media (max-width: 600px) {
+            #mirror-controls {
+                padding: 6px 12px 6px 16px;
+                gap: 6px;
+                bottom: 20px;
+            }
+            #mirror-controls button {
+                width: 36px;
+                height: 36px;
+                font-size: 17px;
+            }
+            #mirror-controls .nav-btn {
+                width: 30px;
+                height: 30px;
+                font-size: 14px;
+            }
+            #mirror-controls .label {
+                font-size: 11px;
+            }
+            #score,
+            #hp {
+                font-size: 14px;
+                padding: 4px 10px;
+            }
+            #msg {
+                font-size: 24px;
+                padding: 20px 24px;
+                width: 80%;
+            }
+            #msg small {
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="top-bar">
+            <div id="score">✦ 晶核 <span id="core-count">0 / 4</span></div>
+            <div id="hp" id="hp-display">⬡ <span id="reflect-count">0</span> 次反射</div>
+        </div>
+
+        <div id="mirror-controls">
+            <span class="label">镜面</span>
+            <button class="nav-btn" id="prev-mirror">◀</button>
+            <span class="mirror-id" id="current-mirror">1</span>
+            <button class="nav-btn" id="next-mirror">▶</button>
+            <span style="color:rgba(255,255,255,0.15);margin:0 2px;">|</span>
+            <button id="rotate-left">⟲</button>
+            <button id="rotate-right">⟳</button>
+        </div>
+
+        <div id="msg">
+            <span id="msg-text">✨ 全部晶核已点亮！</span>
+            <small id="msg-sub">出口已开启 → 走入光门</small>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // ─── 场景初始化 ────────────────────────────────────────────────
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x07071a);
+        scene.fog = new THREE.Fog(0x07071a, 22, 45);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 60);
+        camera.position.set(12, 14, 16);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        document.body.prepend(renderer.domElement);
+
+        // ─── 灯光 ─────────────────────────────────────────────────────
+        const ambient = new THREE.AmbientLight(0x222244, 0.6);
+        scene.add(ambient);
+
+        const dirLight = new THREE.DirectionalLight(0xccddff, 2.0);
+        dirLight.position.set(8, 18, 6);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 40;
+        dirLight.shadow.camera.left = -15;
+        dirLight.shadow.camera.right = 15;
+        dirLight.shadow.camera.top = 15;
+        dirLight.shadow.camera.bottom = -15;
+        scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0x4488ff, 0.5);
+        fillLight.position.set(-8, 6, -10);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0xff66aa, 0.3);
+        rimLight.position.set(0, -4, -14);
+        scene.add(rimLight);
+
+        // ─── 地面 ─────────────────────────────────────────────────────
+        const groundGeo = new THREE.PlaneGeometry(30, 30);
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: 0x0d0d2b,
+            roughness: 0.9,
+            metalness: 0.1,
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // 网格
+        const grid = new THREE.GridHelper(30, 24, 0x3a3a8a, 0x222266);
+        grid.position.y = 0.05;
+        grid.material.transparent = true;
+        grid.material.opacity = 0.25;
+        scene.add(grid);
+
+        // ─── 装饰性几何体（立体迷宫元素） ──────────────────────────────
+        function addDecorPillar(x, z, h, color) {
+            const g = new THREE.CylinderGeometry(0.25, 0.35, h, 6);
+            const m = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.4, emissive: color,
+                emissiveIntensity: 0.05 });
+            const mesh = new THREE.Mesh(g, m);
+            mesh.position.set(x, h / 2, z);
+            mesh.castShadow = true;
+            scene.add(mesh);
+            return mesh;
+        }
+        const pillarPositions = [
+            [-5, -5],
+            [5, -5],
+            [-5, 5],
+            [5, 5],
+            [0, -7],
+            [0, 7],
+            [-7, 0],
+            [7, 0],
+            [-3.5, -3.5],
+            [3.5, 3.5],
+            [-3.5, 3.5],
+            [3.5, -3.5]
+        ];
+        pillarPositions.forEach(p => addDecorPillar(p[0], p[1], 0.8 + Math.random() * 0.6, 0x4444aa));
+
+        // 一些漂浮的小几何体
+        for (let i = 0; i < 30; i++) {
+            const geo = new THREE.TetrahedronGeometry(0.12 + Math.random() * 0.1);
+            const mat = new THREE.MeshStandardMaterial({
+                color: new THREE.Color().setHSL(0.55 + Math.random() * 0.2, 0.4, 0.2 + Math.random() * 0.2),
+                roughness: 0.3,
+                metalness: 0.7,
+                transparent: true,
+                opacity: 0.3 + Math.random() * 0.3,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            const a = Math.random() * Math.PI * 2;
+            const r = 3 + Math.random() * 9;
+            mesh.position.set(Math.cos(a) * r, 0.3 + Math.random() * 2.5, Math.sin(a) * r);
+            mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+            scene.add(mesh);
+        }
+
+        // ─── 粒子背景 ────────────────────────────────────────────────
+        const pCount = 300;
+        const pGeo = new THREE.BufferGeometry();
+        const pPos = new Float32Array(pCount * 3);
+        const pCol = new Float32Array(pCount * 3);
+        for (let i = 0; i < pCount; i++) {
+            pPos[i * 3] = (Math.random() - 0.5) * 50;
+            pPos[i * 3 + 1] = Math.random() * 18;
+            pPos[i * 3 + 2] = (Math.random() - 0.5) * 50;
+            const c = new THREE.Color().setHSL(0.55 + Math.random() * 0.25, 0.5, 0.2 + Math.random() * 0.3);
+            pCol[i * 3] = c.r;
+            pCol[i * 3 + 1] = c.g;
+            pCol[i * 3 + 2] = c.b;
+        }
+        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+        const pMat = new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, opacity: 0.5,
+            blending: THREE.AdditiveBlending });
+        const particles = new THREE.Points(pGeo, pMat);
+        scene.add(particles);
+
+        // ─── 核心游戏元素 ─────────────────────────────────────────────
+        // 光源
+        const lightSourcePos = new THREE.Vector3(-7, 0.6, -6);
+        const lightDir = new THREE.Vector3(1, 0, 0.8).normalize();
+
+        // 光源视觉
+        const sourceMat = new THREE.MeshStandardMaterial({
+            color: 0x6bcbff,
+            emissive: 0x6bcbff,
+            emissiveIntensity: 1.2,
+            roughness: 0.1,
+            metalness: 0.3,
+        });
+        const sourceMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.5), sourceMat);
+        sourceMesh.position.copy(lightSourcePos);
+        sourceMesh.castShadow = true;
+        scene.add(sourceMesh);
+
+        // 光源光晕
+        const glowMat2 = new THREE.SpriteMaterial({
+            map: (() => { const c = document.createElement('canvas');
+                c.width = 64;
+                c.height = 64;
+                const ctx = c.getContext('2d');
+                const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                grad.addColorStop(0, 'rgba(107,203,255,1)');
+                grad.addColorStop(0.3, 'rgba(107,203,255,0.4)');
+                grad.addColorStop(1, 'rgba(107,203,255,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })(),
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            opacity: 0.6,
+        });
+        const glowSprite = new THREE.Sprite(glowMat2);
+        glowSprite.position.copy(lightSourcePos);
+        glowSprite.scale.set(4, 4, 1);
+        scene.add(glowSprite);
+
+        // ─── 镜面 ─────────────────────────────────────────────────────
+        const mirrorData = [];
+        const mirrorGroup = new THREE.Group();
+        scene.add(mirrorGroup);
+
+        const mirrorPositions = [
+            { x: -4.0, z: -3.0, angle: 0.6 },
+            { x: -0.5, z: -4.5, angle: -0.8 },
+            { x: 3.5, z: -2.5, angle: 1.2 },
+            { x: -3.0, z: 1.0, angle: -0.3 },
+            { x: 1.5, z: 2.5, angle: 0.9 },
+            { x: 5.0, z: 1.5, angle: -1.1 },
+            { x: -1.5, z: 5.0, angle: 0.2 },
+            { x: 4.0, z: 4.5, angle: -0.5 },
+        ];
+
+        // 镜面材质
+        const mirrorMat = new THREE.MeshStandardMaterial({
+            color: 0x88ccff,
+            roughness: 0.05,
+            metalness: 0.95,
+            emissive: 0x4488ff,
+            emissiveIntensity: 0.08,
+            transparent: true,
+            opacity: 0.85,
+            side: THREE.DoubleSide,
+        });
+        const mirrorFrameMat = new THREE.MeshStandardMaterial({
+            color: 0x556688,
+            roughness: 0.6,
+            metalness: 0.3,
+        });
+        const selectedMat = new THREE.MeshStandardMaterial({
+            color: 0xffdd44,
+            roughness: 0.1,
+            metalness: 0.8,
+            emissive: 0xffdd44,
+            emissiveIntensity: 0.3,
+            transparent: true,
+            opacity: 0.9,
+            side: THREE.DoubleSide,
+        });
+
+        mirrorPositions.forEach((mp, idx) => {
+            // 镜面主体 — 扁平板
+            const w = 1.6,
+                h = 1.2;
+            const geo = new THREE.BoxGeometry(w, h, 0.08);
+            const mesh = new THREE.Mesh(geo, mirrorMat.clone());
+            mesh.position.set(mp.x, 0.6, mp.z);
+            mesh.rotation.y = mp.angle;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.userData.mirrorIndex = idx;
+            mirrorGroup.add(mesh);
+
+            // 边框
+            const frameGeo = new THREE.EdgesGeometry(geo);
+            const frame = new THREE.LineSegments(frameGeo, new THREE.LineBasicMaterial({ color: 0x88ddff,
+                transparent: true, opacity: 0.2 }));
+            frame.position.copy(mesh.position);
+            frame.rotation.copy(mesh.rotation);
+            mirrorGroup.add(frame);
+
+            // 反光小点
+            const dotMat = new THREE.MeshStandardMaterial({
+                color: 0xaaddff,
+                emissive: 0x4488ff,
+                emissiveIntensity: 0.15,
+                roughness: 0.1,
+                metalness: 0.9,
+            });
+            const dot = new THREE.Mesh(new THREE.CircleGeometry(0.06, 8), dotMat);
+            dot.position.set(mp.x + 0.01, 0.6, mp.z + 0.01);
+            dot.rotation.x = -Math.PI / 2;
+            mirrorGroup.add(dot);
+
+            mirrorData.push({
+                mesh,
+                frame,
+                dot,
+                angle: mp.angle,
+                pos: new THREE.Vector3(mp.x, 0.6, mp.z),
+                index: idx,
+                selected: false,
+            });
+        });
+
+        let selectedMirrorIdx = 0;
+        mirrorData[0].selected = true;
+        updateMirrorVisuals();
+
+        function updateMirrorVisuals() {
+            mirrorData.forEach((md, i) => {
+                const isSel = (i === selectedMirrorIdx);
+                md.mesh.material.color.setHex(isSel ? 0xffdd44 : 0x88ccff);
+                md.mesh.material.emissive.setHex(isSel ? 0xffdd44 : 0x4488ff);
+                md.mesh.material.emissiveIntensity = isSel ? 0.35 : 0.08;
+                md.frame.material.color.setHex(isSel ? 0xffdd44 : 0x88ddff);
+                md.frame.material.opacity = isSel ? 0.7 : 0.2;
+                md.dot.material.emissiveIntensity = isSel ? 0.6 : 0.15;
+                md.dot.material.color.setHex(isSel ? 0xffdd44 : 0xaaddff);
+            });
+            document.getElementById('current-mirror').textContent = selectedMirrorIdx + 1;
+        }
+
+        function rotateMirror(idx, delta) {
+            const md = mirrorData[idx];
+            md.angle += delta;
+            md.mesh.rotation.y = md.angle;
+            md.frame.rotation.y = md.angle;
+            // 更新法线
+            updateBeam();
+        }
+
+        // ─── 晶核 ─────────────────────────────────────────────────────
+        const coreData = [];
+        const corePositions = [
+            { x: -5.5, z: 1.5 },
+            { x: 4.0, z: -4.0 },
+            { x: -2.0, z: 5.5 },
+            { x: 6.5, z: 3.0 },
+        ];
+
+        function createCore(pos) {
+            const radius = 0.45;
+            const geo = new THREE.IcosahedronGeometry(radius, 2);
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0x445566,
+                roughness: 0.3,
+                metalness: 0.6,
+                emissive: 0x112233,
+                emissiveIntensity: 0.1,
+                transparent: true,
+                opacity: 0.7,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(pos.x, 0.6, pos.z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+
+            // 外圈光环
+            const ringGeo = new THREE.TorusGeometry(radius * 1.6, 0.03, 8, 24);
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: 0x446688,
+                transparent: true,
+                opacity: 0.15,
+            });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = Math.PI / 2;
+            mesh.add(ring);
+
+            // 内核光晕 (sprite)
+            const glowCoreMat = new THREE.SpriteMaterial({
+                map: (() => {
+                    const c = document.createElement('canvas');
+                    c.width = 64;
+                    c.height = 64;
+                    const ctx = c.getContext('2d');
+                    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                    grad.addColorStop(0, 'rgba(100,200,255,0.8)');
+                    grad.addColorStop(0.4, 'rgba(60,140,255,0.2)');
+                    grad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, 64, 64);
+                    return new THREE.CanvasTexture(c);
+                })(),
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                opacity: 0.0,
+                depthWrite: false,
+            });
+            const glowSprite2 = new THREE.Sprite(glowCoreMat);
+            glowSprite2.scale.set(3.5, 3.5, 1);
+            glowSprite2.position.y = 0;
+            mesh.add(glowSprite2);
+
+            scene.add(mesh);
+
+            return {
+                mesh,
+                ring,
+                glowSprite: glowSprite2,
+                lit: false,
+                pos: new THREE.Vector3(pos.x, 0.6, pos.z),
+                mat: mat,
+                ringMat: ringMat,
+                glowMat: glowCoreMat,
+                floatPhase: Math.random() * Math.PI * 2,
+            };
+        }
+
+        corePositions.forEach(p => coreData.push(createCore(p)));
+
+        // ─── 出口 ─────────────────────────────────────────────────────
+        const exitGroup = new THREE.Group();
+        const exitPos = new THREE.Vector3(0, 0.6, 8.5);
+
+        // 门框
+        const doorMat = new THREE.MeshStandardMaterial({
+            color: 0x335577,
+            roughness: 0.4,
+            metalness: 0.6,
+            transparent: true,
+            opacity: 0.3,
+            emissive: 0x6699cc,
+            emissiveIntensity: 0.0,
+        });
+        const doorPillarGeo = new THREE.BoxGeometry(0.2, 2.2, 0.2);
+        const p1 = new THREE.Mesh(doorPillarGeo, doorMat);
+        p1.position.set(-1.0, 1.1, 0);
+        exitGroup.add(p1);
+        const p2 = new THREE.Mesh(doorPillarGeo, doorMat);
+        p2.position.set(1.0, 1.1, 0);
+        exitGroup.add(p2);
+        const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.15, 0.2), doorMat);
+        lintel.position.set(0, 2.15, 0);
+        exitGroup.add(lintel);
+
+        // 门内光幕
+        const curtainMat = new THREE.MeshBasicMaterial({
+            color: 0x4488ff,
+            transparent: true,
+            opacity: 0.0,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+        });
+        const curtain = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.0), curtainMat);
+        curtain.position.set(0, 1.0, 0);
+        exitGroup.add(curtain);
+
+        // 门上方标识
+        const sigMat = new THREE.SpriteMaterial({
+            map: (() => {
+                const c = document.createElement('canvas');
+                c.width = 128;
+                c.height = 64;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = 'rgba(68,136,255,0.15)';
+                ctx.roundRect(4, 4, 120, 56, 16);
+                ctx.fill();
+                ctx.fillStyle = '#88ddff';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('⤴ 出口', 64, 34);
+                return new THREE.CanvasTexture(c);
+            })(),
+            transparent: true,
+            opacity: 0.0,
+            depthWrite: false,
+        });
+        const sigSprite = new THREE.Sprite(sigMat);
+        sigSprite.position.set(0, 2.8, 0);
+        sigSprite.scale.set(2.2, 1.1, 1);
+        exitGroup.add(sigSprite);
+
+        exitGroup.position.copy(exitPos);
+        scene.add(exitGroup);
+
+        let exitOpen = false;
+        let winTriggered = false;
+
+        // ─── 光束系统 ─────────────────────────────────────────────────
+        const beamGroup = new THREE.Group();
+        scene.add(beamGroup);
+
+        let beamPoints = [];
+        let beamLine = null;
+        let beamGlowLine = null;
+        let hitCoreIndices = new Set();
+
+        const MAX_REFLECT = 14;
+        const BEAM_RANGE = 25;
+
+        function computeBeam() {
+            const origin = lightSourcePos.clone();
+            const dir = lightDir.clone();
+
+            const mirrors = mirrorData.map(md => ({
+                pos: md.pos.clone(),
+                normal: new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), md.angle),
+                mesh: md.mesh,
+                idx: md.index,
+            }));
+
+            const cores = coreData.map(cd => ({
+                pos: cd.pos.clone(),
+                mesh: cd.mesh,
+                idx: coreData.indexOf(cd),
+                lit: cd.lit,
+            }));
+
+            const points = [origin.clone()];
+            let currentPos = origin.clone();
+            let currentDir = dir.clone();
+            const hitCores = new Set();
+
+            for (let refl = 0; refl < MAX_REFLECT; refl++) {
+                let closestDist = BEAM_RANGE;
+                let closestPoint = null;
+                let closestMirror = null;
+                let closestCore = null;
+
+                // 检测镜面
+                for (const mir of mirrors) {
+                    const n = mir.normal;
+                    const p0 = mir.pos;
+                    const denom = currentDir.dot(n);
+                    if (Math.abs(denom) < 1e-6) continue;
+                    const t = (p0.dot(n) - currentPos.dot(n)) / denom;
+                    if (t < 0.05) continue;
+                    const hit = currentPos.clone().add(currentDir.clone().multiplyScalar(t));
+                    // 检查是否在镜面范围内 (相对于镜面中心的偏移)
+                    const local = hit.clone().sub(p0);
+                    const up = new THREE.Vector3(0, 1, 0);
+                    const right = new THREE.Vector3().crossVectors(n, up).normalize();
+                    const localUp = new THREE.Vector3().crossVectors(right, n).normalize();
+                    const lx = local.dot(right);
+                    const ly = local.dot(localUp);
+                    const halfW = 0.75;
+                    const halfH = 0.55;
+                    if (Math.abs(lx) < halfW && Math.abs(ly) < halfH && t < closestDist) {
+                        closestDist = t;
+                        closestPoint = hit;
+                        closestMirror = mir;
+                        closestCore = null;
+                    }
+                }
+
+                // 检测晶核
+                for (const core of cores) {
+                    const toCore = core.pos.clone().sub(currentPos);
+                    const t2 = toCore.dot(currentDir);
+                    if (t2 < 0.05) continue;
+                    const proj = currentPos.clone().add(currentDir.clone().multiplyScalar(t2));
+                    const dist = proj.distanceTo(core.pos);
+                    if (dist < 0.65 && t2 < closestDist) {
+                        closestDist = t2;
+                        closestPoint = core.pos.clone();
+                        closestMirror = null;
+                        closestCore = core;
+                    }
+                }
+
+                if (closestPoint && closestDist < BEAM_RANGE) {
+                    points.push(closestPoint.clone());
+
+                    if (closestCore) {
+                        hitCores.add(closestCore.idx);
+                        // 停止追踪
+                        break;
+                    }
+
+                    if (closestMirror) {
+                        // 反射
+                        const n = closestMirror.normal.clone();
+                        if (currentDir.dot(n) > 0) n.negate();
+                        currentDir = currentDir.clone().sub(n.clone().multiplyScalar(2 * currentDir.dot(n)));
+                        currentPos = closestPoint.clone();
+                        // 稍微偏移防止自交
+                        currentPos.add(currentDir.clone().multiplyScalar(0.01));
+                        continue;
+                    }
+                    break;
+                } else {
+                    // 延伸到边界
+                    const end = currentPos.clone().add(currentDir.clone().multiplyScalar(BEAM_RANGE));
+                    points.push(end);
+                    break;
+                }
+            }
+
+            return { points, hitCores };
+        }
+
+        function updateBeam() {
+            const result = computeBeam();
+            beamPoints = result.points;
+            const hitCores = result.hitCores;
+
+            // 更新光束可视化
+            if (beamLine) { beamGroup.remove(beamLine);
+                beamLine.geometry.dispose();
+                beamLine = null; }
+            if (beamGlowLine) { beamGroup.remove(beamGlowLine);
+                beamGlowLine.geometry.dispose();
+                beamGlowLine = null; }
+
+            if (beamPoints.length < 2) return;
+
+            const positions = [];
+            beamPoints.forEach(p => positions.push(p.x, p.y, p.z));
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+            // 主光束
+            const mat = new THREE.LineBasicMaterial({
+                color: 0x6bcbff,
+                transparent: true,
+                opacity: 0.7,
+                linewidth: 1,
+            });
+            beamLine = new THREE.Line(geo, mat);
+            beamGroup.add(beamLine);
+
+            // 发光光束 (更粗)
+            const glowMatLine = new THREE.LineBasicMaterial({
+                color: 0x4488ff,
+                transparent: true,
+                opacity: 0.15,
+            });
+            beamGlowLine = new THREE.Line(geo.clone(), glowMatLine);
+            beamGroup.add(beamGlowLine);
+
+            // 在反射点添加光斑
+            for (let i = 1; i < beamPoints.length - 1; i++) {
+                const p = beamPoints[i];
+                const spotMat = new THREE.SpriteMaterial({
+                    map: (() => {
+                        const c = document.createElement('canvas');
+                        c.width = 32;
+                        c.height = 32;
+                        const ctx = c.getContext('2d');
+                        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+                        grad.addColorStop(0, 'rgba(107,203,255,0.8)');
+                        grad.addColorStop(0.5, 'rgba(68,136,255,0.2)');
+                        grad.addColorStop(1, 'rgba(0,0,0,0)');
+                        ctx.fillStyle = grad;
+                        ctx.fillRect(0, 0, 32, 32);
+                        return new THREE.CanvasTexture(c);
+                    })(),
+                    blending: THREE.AdditiveBlending,
+                    transparent: true,
+                    opacity: 0.5 + Math.random() * 0.3,
+                    depthWrite: false,
+                });
+                const spot = new THREE.Sprite(spotMat);
+                spot.position.copy(p);
+                spot.scale.set(1.0, 1.0, 1);
+                beamGroup.add(spot);
+                // 自动清理：存为beamGroup的子对象，下一帧会被移除
+                // 但由于我们每帧重建，需要清理旧的光斑
+                // 我们在重建beamGroup时清除所有子对象
+            }
+
+            // 更新晶核状态
+            hitCoreIndices = hitCores;
+            let allLit = true;
+            coreData.forEach((cd, i) => {
+                const wasLit = cd.lit;
+                const nowLit = hitCores.has(i);
+                cd.lit = nowLit;
+                if (nowLit !== wasLit) {
+                    if (nowLit) {
+                        cd.mat.color.setHex(0x66ddff);
+                        cd.mat.emissive.setHex(0x4488ff);
+                        cd.mat.emissiveIntensity = 0.8;
+                        cd.mat.opacity = 1.0;
+                        cd.ringMat.color.setHex(0x66ddff);
+                        cd.ringMat.opacity = 0.6;
+                        cd.glowMat.opacity = 0.7;
+                        // 粒子爆发效果
+                        burstParticles(cd.pos.clone());
+                    } else {
+                        cd.mat.color.setHex(0x445566);
+                        cd.mat.emissive.setHex(0x112233);
+                        cd.mat.emissiveIntensity = 0.1;
+                        cd.mat.opacity = 0.7;
+                        cd.ringMat.color.setHex(0x446688);
+                        cd.ringMat.opacity = 0.15;
+                        cd.glowMat.opacity = 0.0;
+                    }
+                }
+                if (!cd.lit) allLit = false;
+            });
+
+            // 更新计数
+            const litCount = coreData.filter(cd => cd.lit).length;
+            document.getElementById('core-count').textContent = `${litCount} / ${coreData.length}`;
+            document.getElementById('reflect-count').textContent = beamPoints.length - 1;
+
+            // 检查出口解锁
+            if (allLit && !exitOpen) {
+                exitOpen = true;
+                openExit();
+            } else if (!allLit && exitOpen) {
+                // 如果晶核状态变化，可以关闭出口？为了游戏流畅，保持开启
+                // 但这里我们保持开启后不再关闭
+            }
+
+            // 检查胜利（玩家走进出口）
+            checkWin();
+        }
+
+        // ─── 出口开启 ─────────────────────────────────────────────────
+        function openExit() {
+            // 门发光
+            exitGroup.children.forEach(child => {
+                if (child.isMesh && child.material && child.material.emissiveIntensity !== undefined) {
+                    child.material.emissiveIntensity = 0.8;
+                    child.material.emissive.setHex(0x66ddff);
+                    child.material.opacity = 0.7;
+                }
+            });
+            curtainMat.opacity = 0.6;
+            sigMat.opacity = 1.0;
+            // 门框颜色变化
+            doorMat.color.setHex(0x66ddff);
+            doorMat.emissive.setHex(0x4488ff);
+            doorMat.emissiveIntensity = 0.6;
+            doorMat.opacity = 0.7;
+
+            // 显示消息
+            document.getElementById('msg-text').textContent = '✨ 全部晶核已点亮！';
+            document.getElementById('msg-sub').textContent = '走入光门 → 胜利！';
+            document.getElementById('msg').style.display = 'block';
+            setTimeout(() => {
+                if (!winTriggered) document.getElementById('msg').style.display = 'none';
+            }, 3000);
+        }
+
+        // ─── 胜利检测 ─────────────────────────────────────────────────
+        function checkWin() {
+            if (!exitOpen || winTriggered) return;
+            const playerPos = playerGroup.position;
+            const dist = playerPos.distanceTo(exitPos);
+            if (dist < 1.8) {
+                winTriggered = true;
+                document.getElementById('msg-text').textContent = '🏆 恭喜通关！';
+                document.getElementById('msg-sub').textContent = '光束照亮了所有晶核，出口开启！ ✦';
+                document.getElementById('msg').style.display = 'block';
+                // 庆祝粒子
+                for (let i = 0; i < 5; i++) {
+                    setTimeout(() => {
+                        burstParticles(new THREE.Vector3(
+                            exitPos.x + (Math.random() - 0.5) * 3,
+                            0.5 + Math.random() * 2,
+                            exitPos.z + (Math.random() - 0.5) * 3
+                        ));
+                    }, i * 200);
+                }
+            }
+        }
+
+        // ─── 粒子爆发效果 ─────────────────────────────────────────────
+        const burstParticlesList = [];
+
+        function burstParticles(pos) {
+            const count = 30;
+            const geo = new THREE.BufferGeometry();
+            const positions2 = new Float32Array(count * 3);
+            const colors2 = new Float32Array(count * 3);
+            const velocities = [];
+            for (let i = 0; i < count; i++) {
+                positions2[i * 3] = pos.x + (Math.random() - 0.5) * 0.2;
+                positions2[i * 3 + 1] = pos.y + (Math.random() - 0.5) * 0.2;
+                positions2[i * 3 + 2] = pos.z + (Math.random() - 0.5) * 0.2;
+                const c = new THREE.Color().setHSL(0.55 + Math.random() * 0.25, 0.8, 0.5 + Math.random() * 0.4);
+                colors2[i * 3] = c.r;
+                colors2[i * 3 + 1] = c.g;
+                colors2[i * 3 + 2] = c.b;
+                velocities.push(new THREE.Vector3(
+                    (Math.random() - 0.5) * 3,
+                    Math.random() * 2 + 1,
+                    (Math.random() - 0.5) * 3
+                ));
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positions2, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors2, 3));
+            const mat = new THREE.PointsMaterial({
+                size: 0.12,
+                vertexColors: true,
+                transparent: true,
+                opacity: 1,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+            });
+            const mesh = new THREE.Points(geo, mat);
+            scene.add(mesh);
+            burstParticlesList.push({ mesh, velocities, life: 1.2, pos: pos.clone() });
+        }
+
+        function updateBurstParticles(dt) {
+            for (let i = burstParticlesList.length - 1; i >= 0; i--) {
+                const bp = burstParticlesList[i];
+                bp.life -= dt;
+                if (bp.life <= 0) {
+                    scene.remove(bp.mesh);
+                    bp.mesh.geometry.dispose();
+                    bp.mesh.material.dispose();
+                    burstParticlesList.splice(i, 1);
+                    continue;
+                }
+                const pos = bp.mesh.geometry.attributes.position.array;
+                for (let j = 0; j < bp.velocities.length; j++) {
+                    pos[j * 3] += bp.velocities[j].x * dt;
+                    pos[j * 3 + 1] += bp.velocities[j].y * dt - 1.5 * dt;
+                    pos[j * 3 + 2] += bp.velocities[j].z * dt;
+                    bp.velocities[j].y -= 1.5 * dt;
+                }
+                bp.mesh.geometry.attributes.position.needsUpdate = true;
+                bp.mesh.material.opacity = Math.min(1, bp.life * 1.2);
+                bp.mesh.material.size = 0.08 + bp.life * 0.06;
+            }
+        }
+
+        // ─── 玩家（探索者） ─────────────────────────────────────────────
+        const playerGroup = new THREE.Group();
+
+        const playerMat = new THREE.MeshStandardMaterial({
+            color: 0x88ddff,
+            roughness: 0.3,
+            metalness: 0.5,
+            emissive: 0x4488ff,
+            emissiveIntensity: 0.15,
+        });
+        const playerBody = new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 12), playerMat);
+        playerBody.position.y = 0.4;
+        playerBody.castShadow = true;
+        playerGroup.add(playerBody);
+
+        // 玩家光环
+        const playerGlowMat = new THREE.SpriteMaterial({
+            map: (() => {
+                const c = document.createElement('canvas');
+                c.width = 64;
+                c.height = 64;
+                const ctx = c.getContext('2d');
+                const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                grad.addColorStop(0, 'rgba(136,221,255,0.6)');
+                grad.addColorStop(0.5, 'rgba(68,136,255,0.15)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 64, 64);
+                return new THREE.CanvasTexture(c);
+            })(),
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            opacity: 0.4,
+            depthWrite: false,
+        });
+        const playerGlow = new THREE.Sprite(playerGlowMat);
+        playerGlow.scale.set(2.5, 2.5, 1);
+        playerGroup.add(playerGlow);
+
+        playerGroup.position.set(-5, 0, -4);
+        scene.add(playerGroup);
+
+        const PLAYER_SPEED = 5.5;
+        const BOUNDARY = 12;
+
+        // ─── 输入 ─────────────────────────────────────────────────────
+        const keys = {};
+        let touchX = null,
+            touchY = null;
+
+        document.addEventListener('keydown', e => { keys[e.key] = true; });
+        document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+        renderer.domElement.addEventListener('touchstart', e => {
+            const t = e.touches[0];
+            touchX = t.clientX;
+            touchY = t.clientY;
+        }, { passive: true

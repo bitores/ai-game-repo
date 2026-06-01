@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  在三维迷宫中倾斜平台，操控小球滚动避开障碍，到达终点。
+-->
+<meta name="description" content="在三维迷宫中倾斜平台，操控小球滚动避开障碍，到达终点。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>3D 迷宫滚球</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#07071a;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+canvas{display:block}
+
+/* ── UI ── */
+#hud{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:10;display:flex;align-items:center;gap:10px;pointer-events:none}
+#timer{color:#fff;font-size:21px;font-weight:700;text-shadow:0 2px 12px rgba(0,0,0,.9);background:rgba(0,0,0,.55);backdrop-filter:blur(8px);padding:5px 18px;border-radius:14px;border:1px solid rgba(255,255,255,.08);letter-spacing:.5px;white-space:nowrap}
+#coin-counter{color:#ffdd44;font-size:18px;font-weight:700;text-shadow:0 2px 12px rgba(255,221,68,.5);background:rgba(0,0,0,.55);backdrop-filter:blur(8px);padding:5px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.08);letter-spacing:.5px;white-space:nowrap}
+#hint{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:10;color:rgba(255,255,255,.4);font-size:13px;text-align:center;text-shadow:0 2px 10px rgba(0,0,0,.9);background:rgba(0,0,0,.35);backdrop-filter:blur(4px);padding:7px 20px;border-radius:20px;border:1px solid rgba(255,255,255,.06);white-space:nowrap;pointer-events:none;transition:opacity .8s}
+#hint.hidden{opacity:0}
+
+/* ── Bottom buttons ── */
+#bottom-bar{position:absolute;bottom:20px;right:20px;z-index:10;display:flex;gap:8px;pointer-events:none}
+#bottom-bar button{pointer-events:auto;background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.1);padding:7px 16px;font-size:13px;border-radius:16px;cursor:pointer;backdrop-filter:blur(6px);transition:all .25s;font-family:inherit;letter-spacing:.3px}
+#bottom-bar button:hover{background:rgba(255,255,255,.16);color:#fff}
+#bottom-bar button:active{transform:scale(.95)}
+
+/* ── Win screen ── */
+#win-overlay{position:fixed;top:0;left:0;width:100%;height:100%;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.65);backdrop-filter:blur(12px);opacity:0;pointer-events:none;transition:opacity .7s ease}
+#win-overlay.show{opacity:1;pointer-events:auto}
+#win-box{text-align:center;transform:translateY(20px);transition:transform .7s ease .1s}
+#win-overlay.show #win-box{transform:translateY(0)}
+#win-box h1{font-size:52px;background:linear-gradient(135deg,#ffd700,#ff8844);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 30px rgba(255,215,0,.35));margin-bottom:4px;letter-spacing:2px}
+#win-box .sub{color:rgba(255,255,255,.65);font-size:18px;margin-bottom:20px}
+#win-box .stat{color:#fff;font-size:17px;margin-bottom:3px;opacity:.8}
+#win-box .stat em{font-style:normal;color:#ffd700;font-weight:700}
+#restart-btn{background:linear-gradient(135deg,#ff6b35,#e63e00);color:#fff;border:none;padding:13px 46px;font-size:19px;border-radius:30px;cursor:pointer;margin-top:22px;font-weight:700;letter-spacing:1px;box-shadow:0 8px 32px rgba(230,62,0,.35);transition:transform .25s,box-shadow .25s;pointer-events:auto;font-family:inherit}
+#restart-btn:hover{transform:scale(1.06);box-shadow:0 12px 44px rgba(230,62,0,.45)}
+#restart-btn:active{transform:scale(.96)}
+
+/* ── Die flash ── */
+#die-flash{position:fixed;top:0;left:0;width:100%;height:100%;z-index:50;background:radial-gradient(ellipse at center,rgba(255,0,0,.35),rgba(255,0,0,0) 70%);opacity:0;pointer-events:none;transition:opacity .35s}
+#die-flash.show{opacity:1}
+
+/* ── Rules overlay ── */
+#rules-overlay{position:fixed;top:0;left:0;width:100%;height:100%;z-index:90;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(10px);opacity:0;pointer-events:none;transition:opacity .5s ease}
+#rules-overlay.show{opacity:1;pointer-events:auto}
+#rules-box{background:rgba(20,20,50,.92);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:32px 36px;max-width:540px;width:90%;max-height:80vh;overflow-y:auto;transform:translateY(20px);transition:transform .5s ease .1s}
+#rules-overlay.show #rules-box{transform:translateY(0)}
+#rules-box h2{color:#fff;font-size:26px;margin-bottom:18px;text-align:center;letter-spacing:2px}
+#rules-box .rule-section{margin-bottom:16px;padding:14px 18px;background:rgba(255,255,255,.04);border-radius:14px;border-left:3px solid rgba(255,255,255,.15)}
+#rules-box .rule-section .icon{font-size:22px;margin-right:10px}
+#rules-box .rule-section h3{color:#fff;font-size:16px;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+#rules-box .rule-section p{color:rgba(255,255,255,.65);font-size:14px;line-height:1.6;margin:0}
+#rules-box .goal-highlight{border-left-color:#00ff88}
+#rules-box .danger-highlight{border-left-color:#ff4455}
+#rules-box .coin-highlight{border-left-color:#ffdd44}
+#rules-box .checkpoint-highlight{border-left-color:#44ddff}
+#rules-box .control-highlight{border-left-color:#4488ff}
+#rules-close-btn{display:block;margin:20px auto 0;background:linear-gradient(135deg,#4488ff,#2255cc);color:#fff;border:none;padding:11px 40px;font-size:16px;border-radius:24px;cursor:pointer;font-weight:700;letter-spacing:1px;transition:transform .25s,box-shadow .25s;font-family:inherit}
+#rules-close-btn:hover{transform:scale(1.05);box-shadow:0 6px 24px rgba(68,136,255,.35)}
+#rules-close-btn:active{transform:scale(.96)}
+
+/* ── Rules button ── */
+#rules-btn{pointer-events:auto;background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.1);padding:7px 16px;font-size:13px;border-radius:16px;cursor:pointer;backdrop-filter:blur(6px);transition:all .25s;font-family:inherit;letter-spacing:.3px}
+#rules-btn:hover{background:rgba(255,255,255,.16);color:#fff}
+#rules-btn:active{transform:scale(.95)}
+
+@media(max-width:600px){
+  #rules-box{padding:24px 20px}
+  #rules-box h2{font-size:22px}
+  #rules-box .rule-section{padding:12px 14px}
+  #rules-box .rule-section p{font-size:13px}
+}
+
+/* ── Checkpoint notification ── */
+#cp-notif{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:20;color:#44ddff;font-size:28px;font-weight:700;text-shadow:0 0 30px rgba(68,221,255,.5);opacity:0;pointer-events:none;transition:opacity .5s,transform .5s;letter-spacing:2px}
+#cp-notif.show{opacity:1;transform:translate(-50%,-60%)}
+
+@media(max-width:600px){
+  #timer{font-size:17px;padding:4px 14px}
+  #coin-counter{font-size:15px;padding:4px 12px}
+  #hint{font-size:11px;padding:6px 14px;white-space:normal;max-width:90%}
+  #win-box h1{font-size:36px}
+  #win-box .sub{font-size:15px}
+  #restart-btn{padding:11px 34px;font-size:17px}
+  #bottom-bar{bottom:14px;right:14px}
+  #bottom-bar button{padding:5px 12px;font-size:12px}
+}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="timer">⏱ 00.0s</div>
+  <div id="coin-counter">🪙 0</div>
+</div>
+<div id="hint">🖱 拖动倾斜平台 · 方向键/WASD · 避开红色障碍到达绿色终点</div>
+
+<div id="bottom-bar">
+  <button id="center-btn">⟲ 回正</button>
+  <button id="rules-btn">📖 规则</button>
+  <button id="reset-btn">↺ 重置</button>
+</div>
+
+<div id="die-flash"></div>
+<div id="cp-notif">✦ 存档点</div>
+
+<div id="rules-overlay">
+  <div id="rules-box">
+    <h2>📖 游戏规则</h2>
+
+    <div class="rule-section goal-highlight">
+      <h3><span class="icon">🎯</span> 游戏目标</h3>
+      <p>操控小球从起点（<strong>蓝色光圈</strong>）出发，穿越复杂迷宫，到达 <strong>绿色终点光环</strong> 即可通关！</p>
+    </div>
+
+    <div class="rule-section control-highlight">
+      <h3><span class="icon">🖱</span> 操控方式</h3>
+      <p><strong>鼠标/手指拖动</strong>：在画面中拖动即可倾斜平台，小球会因重力向下滚动。<br>
+      <strong>键盘</strong>：方向键 ↑↓←→ 或 W A S D 控制倾斜方向。<br>
+      <strong>⟲ 回正</strong>：一键将平台恢复水平。<br>
+      <strong>↺ 重置</strong>：从起点或存档点重新开始。</p>
+    </div>
+
+    <div class="rule-section danger-highlight">
+      <h3><span class="icon">💀</span> 危险！避开障碍</h3>
+      <p>迷宫中散布着 <strong>红色尖刺方块</strong>（静止）和 <strong>橙色巡逻方块</strong>（来回移动）。<br>
+      碰到任何障碍物都会 <strong>立即失败</strong>，小球将被摧毁并重置。</p>
+    </div>
+
+    <div class="rule-section coin-highlight">
+      <h3><span class="icon">🪙</span> 收集金币</h3>
+      <p>迷宫中散落着 <strong>金色旋转金币</strong>。滚过金币即可自动收集，全部收集可获得完美通关评价！</p>
+    </div>
+
+    <div class="rule-section checkpoint-highlight">
+      <h3><span class="icon">✦</span> 存档点</h3>
+      <p>迷宫中央有一个 <strong>青色光环存档点</strong>。到达后，如果后续失败将会在这里复活，无需从头开始。</p>
+    </div>
+
+    <div class="rule-section goal-highlight">
+      <h3><span class="icon">🏆</span> 通关条件</h3>
+      <p>成功让小球滚入 <strong>绿色终点光环</strong> 即可通关！系统会记录你的 <strong>用时</strong>、<strong>步数</strong> 和 <strong>金币收集数</strong>。</p>
+    </div>
+
+    <button id="rules-close-btn">知道了，开始游戏！</button>
+  </div>
+</div>
+
+<div id="win-overlay">
+  <div id="win-box">
+    <h1>🏆 恭喜通关！</h1>
+    <div class="sub">成功操控小球穿越迷宫</div>
+    <div class="stat">⏱ 用时 <em id="final-time">00.0s</em></div>
+    <div class="stat">📊 步数 <em id="final-moves">0</em></div>
+    <div class="stat">🪙 金币 <em id="final-coins">0</em></div>
+    <button id="restart-btn">🔄 再来一次</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ══════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ══════════════════════════════════════════════════════════════
+
+const COLS       = 13;
+const ROWS       = 11;
+const CELL       = 1;
+const WALL_H     = 0.45;
+const BALL_R     = 0.13;
+const MAX_TILT   = Math.PI / 7.5;  // ~24°
+const TILT_LERP  = 0.06;
+const CENTER_RATE = 0.94;          // auto-center damping per frame
+const GRAVITY    = 9.0;
+const FRICTION   = 0.975;
+const BOUNCE     = 0.2;
+const MAX_SPEED  = 3.0;
+
+// ══════════════════════════════════════════════════════════════
+//  MAZE DATA
+//  0=path  1=wall  2=start  3=goal  4=obstacle  5=checkpoint
+// ══════════════════════════════════════════════════════════════
+
+const mazeData = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,1,0,0,0,0,0,0,0,1],
+  [1,1,1,0,1,0,1,1,1,1,1,0,1],
+  [1,0,0,2,4,0,0,0,0,0,1,0,1],  // start at (3,3)  obstacle at (3,4)
+  [1,0,1,1,1,1,1,1,1,0,1,0,1],
+  [1,4,0,0,0,5,0,0,0,0,0,0,1],  // obstacle (5,1)  checkpoint (5,5)
+  [1,0,1,1,1,0,1,1,1,1,1,0,1],
+  [1,0,0,0,0,0,0,0,4,0,1,0,1],  // obstacle at (7,8)
+  [1,1,1,1,1,0,1,1,1,0,1,0,1],
+  [1,0,0,0,0,0,0,0,0,0,4,3,1],  // obstacle at (9,10) near goal
+  [1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+
+// Locate special cells & convert to path
+let startCol, startRow, goalCol, goalRow;
+const obstacles = [];
+let checkpointCol, checkpointRow;
+
+// Moving obstacles: { col, row, dir: 'x'|'z', range: cells to patrol, speed: cycles/sec }
+const movingObsData = [
+  { col: 5, row: 3, dir: 'z', range: 1.2, speed: 0.7 },
+  { col: 5, row: 7, dir: 'x', range: 1.5, speed: 0.5 },
+];
+
+// Coin collectibles positions
+const coinPositions = [
+  { col: 3, row: 2 },
+  { col: 6, row: 3 },
+  { col: 8, row: 5 },
+  { col: 4, row: 7 },
+  { col: 7, row: 9 },
+];
+
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const v = mazeData[r][c];
+    if (v === 2) { startCol = c; startRow = r; mazeData[r][c] = 0; }
+    if (v === 3) { goalCol  = c; goalRow  = r; mazeData[r][c] = 0; }
+    if (v === 4) { obstacles.push({ r, c });    mazeData[r][c] = 0; }
+    if (v === 5) { checkpointCol = c; checkpointRow = r; mazeData[r][c] = 0; }
+  }
+}
+
+// Ball starts at the maze start cell
+const startWorldX = cellCX(startCol);
+const startWorldZ = cellCZ(startRow);
+
+// ══════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════
+
+const _v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+
+function cellCX(c) { return c - (COLS - 1) / 2; }
+function cellCZ(r) { return r - (ROWS - 1) / 2; }
+
+function worldToLocal(wx, wz, invQ) {
+  return _v.set(wx, 0, wz).applyQuaternion(invQ);
+}
+
+function floorWorldY(lx, lz, q) {
+  return _v.set(lx, 0, lz).applyQuaternion(q).y;
+}
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// ══════════════════════════════════════════════════════════════
+//  THREE.JS SETUP
+// ══════════════════════════════════════════════════════════════
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07071a);
+scene.fog = new THREE.Fog(0x07071a, 20, 32);
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 40);
+camera.position.set(0, 10.5, 9.5);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.prepend(renderer.domElement);
+
+// ══════════════════════════════════════════════════════════════
+//  LIGHTING
+// ══════════════════════════════════════════════════════════════
+
+scene.add(new THREE.AmbientLight(0x444466, 0.5));
+scene.add(new THREE.HemisphereLight(0x8888ff, 0x442200, 0.4));
+
+const sun = new THREE.DirectionalLight(0xffeedd, 2.0);
+sun.position.set(5, 14, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.near = 0.5;
+sun.shadow.camera.far = 28;
+sun.shadow.camera.left = -10;
+sun.shadow.camera.right = 10;
+sun.shadow.camera.top = 10;
+sun.shadow.camera.bottom = -10;
+sun.shadow.bias = -0.002;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0x4488ff, 0.35);
+fill.position.set(-5, 6, -5);
+scene.add(fill);
+
+// ══════════════════════════════════════════════════════════════
+//  MAZE GROUP
+// ══════════════════════════════════════════════════════════════
+
+const mazeGroup = new THREE.Group();
+scene.add(mazeGroup);
+
+// ── Floor ──
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x22223a, roughness: 0.7, metalness: 0.08,
+});
+const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(COLS * CELL, 0.14, ROWS * CELL), floorMat);
+floorMesh.position.y = -0.07;
+floorMesh.receiveShadow = true;
+mazeGroup.add(floorMesh);
+
+// ── Grid lines ──
+const gridMat = new THREE.MeshStandardMaterial({
+  color: 0x33334d, roughness: 0.8, transparent: true, opacity: 0.2,
+});
+for (let i = 0; i <= COLS; i++) {
+  const l = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.001, ROWS * CELL), gridMat);
+  l.position.set(i - COLS / 2, 0.001, 0);
+  mazeGroup.add(l);
+}
+for (let j = 0; j <= ROWS; j++) {
+  const l = new THREE.Mesh(new THREE.BoxGeometry(COLS * CELL, 0.001, 0.004), gridMat);
+  l.position.set(0, 0.001, j - ROWS / 2);
+  mazeGroup.add(l);
+}
+
+// ── Walls ──
+const wallMat = new THREE.MeshStandardMaterial({
+  color: 0x4a6a8a, roughness: 0.55, metalness: 0.25,
+  emissive: 0x18283a, emissiveIntensity: 0.06,
+});
+const capMat = new THREE.MeshStandardMaterial({
+  color: 0x5a7a9a, roughness: 0.45, metalness: 0.3,
+  emissive: 0x18283a, emissiveIntensity: 0.08,
+});
+const wallGeo    = new THREE.BoxGeometry(CELL * 0.95, WALL_H,       CELL * 0.95);
+const wallCapGeo = new THREE.BoxGeometry(CELL * 0.97, 0.04,         CELL * 0.97);
+
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    if (mazeData[r][c] !== 1) continue;
+    const x = cellCX(c);
+    const z = cellCZ(r);
+    const w = new THREE.Mesh(wallGeo, wallMat);
+    w.position.set(x, WALL_H / 2, z);
+    w.castShadow = true; w.receiveShadow = true;
+    mazeGroup.add(w);
+    const cap = new THREE.Mesh(wallCapGeo, capMat);
+    cap.position.set(x, WALL_H - 0.02, z);
+    mazeGroup.add(cap);
+  }
+}
+
+// ── Start disc ──
+const startMat = new THREE.MeshStandardMaterial({
+  color: 0x4488ff, emissive: 0x4488ff, emissiveIntensity: 0.4,
+  transparent: true, opacity: 0.6, roughness: 0.3, metalness: 0.1,
+  side: THREE.DoubleSide,
+});
+const startDisc = new THREE.Mesh(new THREE.CircleGeometry(0.28, 32), startMat);
+startDisc.rotation.x = -Math.PI / 2;
+startDisc.position.set(startWorldX, 0.004, startWorldZ);
+mazeGroup.add(startDisc);
+
+// ── Goal ──
+const goalMat = new THREE.MeshStandardMaterial({
+  color: 0x00ff88, emissive: 0x00ff88, emissiveIntensity: 0.5,
+  transparent: true, opacity: 0.7, roughness: 0.2, metalness: 0.1,
+  side: THREE.DoubleSide,
+});
+const goalRing = new THREE.Mesh(new THREE.RingGeometry(0.16, 0.30, 48), goalMat);
+goalRing.rotation.x = -Math.PI / 2;
+goalRing.position.set(cellCX(goalCol), 0.006, cellCZ(goalRow));
+mazeGroup.add(goalRing);
+
+// Goal pillar
+const pillarMat = new THREE.MeshStandardMaterial({
+  color: 0x00ff88, emissive: 0x00ff88, emissiveIntensity: 0.4,
+  transparent: true, opacity: 0.3, roughness: 0.1, metalness: 0.3,
+});
+const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.10, WALL_H * 0.7, 8), pillarMat);
+pillar.position.set(cellCX(goalCol), WALL_H * 0.35, cellCZ(goalRow));
+mazeGroup.add(pillar);
+
+// Goal glow sprite
+const glowCanvas = (() => {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0,  'rgba(0,255,136,1)');
+  g.addColorStop(0.2,'rgba(0,255,136,0.6)');
+  g.addColorStop(0.5,'rgba(0,255,136,0.2)');
+  g.addColorStop(1,  'rgba(0,255,136,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const goalGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: glowCanvas, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.7,
+}));
+goalGlow.position.set(cellCX(goalCol), 0.3, cellCZ(goalRow));
+goalGlow.scale.set(1.8, 1.8, 1);
+mazeGroup.add(goalGlow);
+
+// ── Goal particles ──
+const PART_COUNT = 28;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(PART_COUNT * 3);
+const pVelArr = [];
+const pLife  = [];
+
+function resetParticle(idx) {
+  const a = Math.random() * Math.PI * 2;
+  const r = 0.06 + Math.random() * 0.3;
+  pPos[idx * 3]     = Math.cos(a) * r;
+  pPos[idx * 3 + 1] = 0.02 + Math.random() * 0.3;
+  pPos[idx * 3 + 2] = Math.sin(a) * r;
+  pVelArr[idx] = {
+    x: (Math.random() - 0.5) * 0.3,
+    y: 0.06 + Math.random() * 0.18,
+    z: (Math.random() - 0.5) * 0.3,
+  };
+  pLife[idx] = 0.4 + Math.random() * 1.2;
+}
+for (let i = 0; i < PART_COUNT; i++) resetParticle(i);
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const pMat = new THREE.PointsMaterial({
+  color: 0x00ff88, size: 0.035, transparent: true, opacity: 0.45,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const pSys = new THREE.Points(pGeo, pMat);
+pSys.position.set(cellCX(goalCol), 0, cellCZ(goalRow));
+mazeGroup.add(pSys);
+
+// ── Obstacles (hazard blocks) ──
+const obsMat = new THREE.MeshStandardMaterial({
+  color: 0xcc2244, roughness: 0.3, metalness: 0.5,
+  emissive: 0xff2244, emissiveIntensity: 0.15,
+});
+const obsMat2 = new THREE.MeshStandardMaterial({
+  color: 0x992244, roughness: 0.4, metalness: 0.3,
+});
+const obsGroup = new THREE.Group();
+mazeGroup.add(obsGroup);
+
+for (const o of obstacles) {
+  const x = cellCX(o.c);
+  const z = cellCZ(o.r);
+
+  // Base cube
+  const cube = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.55, WALL_H * 0.7, CELL * 0.55), obsMat);
+  cube.position.set(0, WALL_H * 0.35, 0);
+  cube.castShadow = true;
+  const g = new THREE.Group();
+  g.add(cube);
+
+  // Spikes on top
+  const spikeMat = new THREE.MeshStandardMaterial({
+    color: 0xff4455, emissive: 0xff2244, emissiveIntensity: 0.2,
+    roughness: 0.3, metalness: 0.1,
+  });
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2;
+    const sd = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), spikeMat);
+    sd.position.set(Math.cos(angle) * 0.18, WALL_H * 0.7 + 0.06, Math.sin(angle) * 0.18);
+    sd.rotation.x = Math.PI / 6;
+    sd.rotation.z = angle;
+    g.add(sd);
+  }
+  // Center spike
+  const cs = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 6), spikeMat);
+  cs.position.set(0, WALL_H * 0.7 + 0.08, 0);
+  g.add(cs);
+
+  // Glow ring
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: 0xff2244, emissive: 0xff2244, emissiveIntensity: 0.5,
+    transparent: true, opacity: 0.4, side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 24), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.005;
+  g.add(ring);
+
+  g.position.set(x, 0, z);
+  obsGroup.add(g);
+}
+
+// ── Moving obstacles (patrolling hazards) ──
+const movObsGroup = new THREE.Group();
+mazeGroup.add(movObsGroup);
+
+const movObsMat = new THREE.MeshStandardMaterial({
+  color: 0xff6600, roughness: 0.3, metalness: 0.4,
+  emissive: 0xff4400, emissiveIntensity: 0.2,
+});
+const movObsMat2 = new THREE.MeshStandardMaterial({
+  color: 0xcc4400, roughness: 0.5, metalness: 0.2,
+});
+
+for (const mo of movingObsData) {
+  const bx = cellCX(mo.col);
+  const bz = cellCZ(mo.row);
+  const g = new THREE.Group();
+
+  // Main body (smaller than static obstacle)
+  const body = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.45, WALL_H * 0.5, CELL * 0.45), movObsMat);
+  body.position.y = WALL_H * 0.25;
+  body.castShadow = true;
+  g.add(body);
+
+  // Spikes
+  const spikeMat2 = new THREE.MeshStandardMaterial({
+    color: 0xff8844, emissive: 0xff4400, emissiveIntensity: 0.3,
+    roughness: 0.3, metalness: 0.1,
+  });
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const sd = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.1, 6), spikeMat2);
+    sd.position.set(Math.cos(a) * 0.15, WALL_H * 0.5 + 0.05, Math.sin(a) * 0.15);
+    sd.rotation.x = Math.PI / 5;
+    sd.rotation.z = a;
+    g.add(sd);
+  }
+  const cs2 = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), spikeMat2);
+  cs2.position.set(0, WALL_H * 0.5 + 0.06, 0);
+  g.add(cs2);
+
+  // Glow ring
+  const mrMat = new THREE.MeshStandardMaterial({
+    color: 0xff6600, emissive: 0xff6600, emissiveIntensity: 0.6,
+    transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+  });
+  const mRing = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.28, 24), mrMat);
+  mRing.rotation.x = -Math.PI / 2;
+  mRing.position.y = 0.005;
+  g.add(mRing);
+
+  // Store animation data on the group
+  g.userData = {
+    baseX: bx,
+    baseZ: bz,
+    dir: mo.dir,
+    range: mo.range,
+    speed: mo.speed,
+    phase: Math.random() * Math.PI * 2,
+  };
+
+  g.position.set(bx, 0, bz);
+  movObsGroup.add(g);
+}
+
+// ── Coins (collectibles) ──
+const coinGroup = new THREE.Group();
+mazeGroup.add(coinGroup);
+
+const coinMat = new THREE.MeshStandardMaterial({
+  color: 0xffdd44, emissive: 0xffdd44, emissiveIntensity: 0.5,
+  roughness: 0.2, metalness: 0.7,
+  side: THREE.DoubleSide,
+});
+const coinGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.025, 16);
+const collectedCoins = new Set();
+
+for (const cp of coinPositions) {
+  const cx = cellCX(cp.col);
+  const cz = cellCZ(cp.row);
+  const coin = new THREE.Mesh(coinGeo, coinMat);
+  coin.position.set(cx, WALL_H * 0.6, cz);
+  coin.rotation.x = Math.PI / 2;
+  coin.castShadow = true;
+  coin.userData = { col: cp.col, row: cp.row, collected: false, bobPhase: Math.random() * Math.PI * 2 };
+  coinGroup.add(coin);
+
+  // Small glow sprite for each coin
+  const coinGlowCanvas = (() => {
+    const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    g.addColorStop(0, 'rgba(255,221,68,0.5)');
+    g.addColorStop(1, 'rgba(255,221,68,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32);
+    return new THREE.CanvasTexture(c);
+  })();
+  const cGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: coinGlowCanvas, blending: THREE.AdditiveBlending,
+    transparent: true, depthWrite: false, opacity: 0.6,
+  }));
+  cGlow.scale.set(0.5, 0.5, 1);
+  cGlow.position.y = -0.04;
+  coin.add(cGlow);
+}
+
+// ── Checkpoint marker ──
+const cpMat = new THREE.MeshStandardMaterial({
+  color: 0x44ddff, emissive: 0x44ddff, emissiveIntensity: 0.3,
+  transparent: true, opacity: 0.5, side: THREE.DoubleSide, roughness: 0.2, metalness: 0.1,
+});
+if (checkpointCol !== undefined) {
+  const cpRing = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.28, 32), cpMat);
+  cpRing.rotation.x = -Math.PI / 2;
+  cpRing.position.set(cellCX(checkpointCol), 0.004, cellCZ(checkpointRow));
+  mazeGroup.add(cpRing);
+
+  // Checkpoint flag/beam
+  const beamMat = new THREE.MeshStandardMaterial({
+    color: 0x44ddff, emissive: 0x44ddff, emissiveIntensity: 0.2,
+    transparent: true, opacity: 0.2,
+  });
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, WALL_H * 0.6, 6), beamMat);
+  beam.position.set(cellCX(checkpointCol), WALL_H * 0.3, cellCZ(checkpointRow));
+  mazeGroup.add(beam);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  BALL
+// ══════════════════════════════════════════════════════════════
+
+const ballGroup = new THREE.Group();
+scene.add(ballGroup);
+
+const ballMat = new THREE.MeshStandardMaterial({
+  color: 0xff4422, roughness: 0.1, metalness: 0.9,
+  emissive: 0xff2200, emissiveIntensity: 0.05,
+});
+const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 28, 28), ballMat);
+ballMesh.castShadow = true; ballMesh.receiveShadow = true;
+ballGroup.add(ballMesh);
+
+// Rolling stripes
+const sMat = new THREE.MeshStandardMaterial({
+  color: 0xffffff, roughness: 0.2, metalness: 0.2,
+  emissive: 0xffffff, emissiveIntensity: 0.04,
+});
+const sGeo = new THREE.TorusGeometry(BALL_R * 1.01, 0.01, 6, 28);
+const s1 = new THREE.Mesh(sGeo, sMat); s1.rotation.x = Math.PI / 2; ballGroup.add(s1);
+const s2 = new THREE.Mesh(sGeo, sMat); s2.rotation.z = Math.PI / 2; ballGroup.add(s2);
+
+// Ball glow
+const bgCanvas = (() => {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0, 'rgba(255,68,34,0.3)');
+  g.addColorStop(1, 'rgba(255,68,34,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+})();
+const ballGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: bgCanvas, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+}));
+ballGlow.scale.set(BALL_R * 4, BALL_R * 4, 1);
+ballGlow.position.y = -BALL_R * 0.85;
+ballGroup.add(ballGlow);
+
+// ── Ball trail ──
+const TRAIL_LEN = 30;
+const trailPositions = new Float32Array(TRAIL_LEN * 3);
+const trailGeo = new THREE.BufferGeometry();
+const trailPosAttr = new THREE.BufferAttribute(trailPositions, 3);
+trailGeo.setAttribute('position', trailPosAttr);
+const trailMat = new THREE.PointsMaterial({
+  color: 0xff6633, size: 0.03, transparent: true, opacity: 0.35,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+  sizeAttenuation: true,
+});
+const trailMesh = new THREE.Points(trailGeo, trailMat);
+scene.add(trailMesh);
+
+// ── Trail glow ──
+const trailGlowGeo = new THREE.BufferGeometry();
+const trailGlowPos = new Float32Array(TRAIL_LEN * 3);
+trailGlowGeo.setAttribute('position', new THREE.BufferAttribute(trailGlowPos, 3));
+const trailGlowMat = new THREE.PointsMaterial({
+  color: 0xff8844, size: 0.06, transparent: true, opacity: 0.15,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+  sizeAttenuation: true,
+});
+const trailGlowMesh = new THREE.Points(trailGlowGeo, trailGlowMat);
+scene.add(trailGlowMesh);
+
+// ══════════════════════════════════════════════════════════════
+//  GAME STATE
+// ══════════════════════════════════════════════════════════════
+
+let velX = 0, velZ = 0;
+let moveCount = 0;
+let lastMoveX = 0, lastMoveZ = 0;
+let gameWon = false;
+let gameStarted = false;
+let startTime = 0;
+let checkpointReached = false;
+let coinsCollected = 0;
+
+let trailIdx = 0;
+let trailTimer = 0;
+
+// Checkpoint position (world coords)
+let cpWorldX, cpWorldZ;
+if (checkpointCol !== undefined) {
+  cpWorldX = cellCX(checkpointCol);
+  cpWorldZ = cellCZ(checkpointRow);
+}
+
+const ballRotQ = new THREE.Quaternion();
+
+function resetBall() {
+  ballGroup.position.set(startWorldX, 0, startWorldZ);
+  velX = 0; velZ = 0;
+  moveCount = 0;
+  gameWon = false;
+  gameStarted = false;
+  startTime = 0;
+  checkpointReached = false;
+  coinsCollected = 0;
+  ballRotQ.identity();
+  ballGroup.quaternion.identity();
+  lastMoveX = ballGroup.position.x;
+  lastMoveZ = ballGroup.position.z;
+  document.getElementById('win-overlay').classList.remove('show');
+  document.getElementById('timer').textContent = '⏱ 00.0s';
+  document.getElementById('coin-counter').textContent = '🪙 0';
+  // Reset all coins
+  collectedCoins.clear();
+  coinGroup.children.forEach(c => { c.visible = true; c.userData.collected = false; });
+  // Clear trail
+  trailPositions.fill(0);
+  trailIdx = 0;
+  trailTimer = 0;
+  snapToFloor();
+}
+
+/** Reset ball to checkpoint if reached, else to start */
+function dieAndReset() {
+  if (gameWon) return;
+  velX = 0; velZ = 0;
+
+  // Flash effect
+  const flash = document.getElementById('die-flash');
+  flash.classList.add('show');
+  setTimeout(() => flash.classList.remove('show'), 400);
+
+  // Reset coins on death
+  collectedCoins.clear();
+  coinGroup.children.forEach(c => { c.visible = true; c.userData.collected = false; });
+  coinsCollected = 0;
+  document.getElementById('coin-counter').textContent = '🪙 0';
+
+  if (checkpointReached && cpWorldX !== undefined) {
+    ballGroup.position.set(cpWorldX, 0, cpWorldZ);
+  } else {
+    ballGroup.position.set(startWorldX, 0, startWorldZ);
+    moveCount = 0;
+  }
+  lastMoveX = ballGroup.position.x;
+  lastMoveZ = ballGroup.position.z;
+  snapToFloor();
+}
+
+function snapToFloor() {
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const fwy = floorWorldY(local.x, local.z, mazeGroup.quaternion);
+  ballGroup.position.y = fwy + BALL_R;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  INPUT  — Set-based keys
+// ══════════════════════════════════════════════════════════════
+
+const pressed = new Set();
+
+document.addEventListener('keydown', (e) => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  pressed.add(k);
+  if (k === 'r') resetBall();
+  if (k === ' ' && gameWon) resetBall();
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','r',' '].includes(k)) {
+    e.preventDefault();
+  }
+});
+document.addEventListener('keyup', (e) => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  pressed.delete(k);
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d'].includes(k)) e.preventDefault();
+});
+
+// ── Mouse / Touch: position-relative tilt + auto-center ──
+let pointerDown = false;
+let ptrStartX = 0, ptrStartY = 0;
+let tiltTargetX = 0, tiltTargetZ = 0;
+
+function onPointerDown(cx, cy) {
+  pointerDown = true;
+  ptrStartX = cx;
+  ptrStartY = cy;
+}
+
+function onPointerMove(cx, cy) {
+  if (!pointerDown) return;
+  const dx = cx - ptrStartX;
+  const dy = cy - ptrStartY;
+  const maxD = Math.min(window.innerWidth, window.innerHeight) * 0.35;
+  tiltTargetZ = clamp(-dx / maxD, -1, 1) * MAX_TILT;
+  tiltTargetX = clamp(dy / maxD, -1, 1) * MAX_TILT;
+}
+
+function onPointerUp() {
+  pointerDown = false;
+  // tiltTarget stays — auto-center handles gradual return
+}
+
+// Mouse
+renderer.domElement.addEventListener('mousedown', (e) => onPointerDown(e.clientX, e.clientY));
+window.addEventListener('mousemove', (e) => onPointerMove(e.clientX, e.clientY));
+window.addEventListener('mouseup',   () => onPointerUp());
+
+// Touch
+renderer.domElement.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  onPointerDown(t.clientX, t.clientY);
+}, { passive: false });
+renderer.domElement.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  onPointerMove(t.clientX, t.clientY);
+}, { passive: false });
+renderer.domElement.addEventListener('touchend',   () => onPointerUp());
+renderer.domElement.addEventListener('touchcancel', () => onPointerUp());
+
+// ══════════════════════════════════════════════════════════════
+//  PHYSICS & COLLISION
+// ══════════════════════════════════════════════════════════════
+
+function checkWallCollisions() {
+  const r = BALL_R * 0.85;
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const bcx = local.x;
+  const bcz = local.z;
+  const gc = bcx + (COLS - 1) / 2;
+  const gr = bcz + (ROWS - 1) / 2;
+  const sC = Math.max(0, Math.floor(gc) - 1);
+  const eC = Math.min(COLS - 1, Math.ceil(gc) + 1);
+  const sR = Math.max(0, Math.floor(gr) - 1);
+  const eR = Math.min(ROWS - 1, Math.ceil(gr) + 1);
+
+  for (let r = sR; r <= eR; r++) {
+    for (let c = sC; c <= eC; c++) {
+      if (mazeData[r][c] !== 1) continue;
+      const hw = CELL * 0.46;
+      const wx = cellCX(c);
+      const wz = cellCZ(r);
+      const cpx = clamp(bcx, wx - hw, wx + hw);
+      const cpz = clamp(bcz, wz - hw, wz + hw);
+      const dx = bcx - cpx;
+      const dz = bcz - cpz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= r * r || d2 < 1e-8) continue;
+      const d = Math.sqrt(d2);
+      const over = r - d;
+      const nx = dx / d, nz = dz / d;
+      // Push out (world space)
+      const push = _v.set(nx * over, 0, nz * over).applyQuaternion(mazeGroup.quaternion);
+      ballGroup.position.x += push.x;
+      ballGroup.position.z += push.z;
+      // Reflect velocity
+      const nw = _v.set(nx, 0, nz).applyQuaternion(mazeGroup.quaternion);
+      const vDot = velX * nw.x + velZ * nw.z;
+      if (vDot < 0) {
+        velX -= vDot * nw.x * (1 + BOUNCE);
+        velZ -= vDot * nw.z * (1 + BOUNCE);
+      }
+    }
+  }
+}
+
+function checkObstacles() {
+  const r = BALL_R * 0.7;
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const bcx = local.x;
+  const bcz = local.z;
+
+  for (const o of obstacles) {
+    const wx = cellCX(o.c);
+    const wz = cellCZ(o.r);
+    const hw = CELL * 0.27;
+    const cpx = clamp(bcx, wx - hw, wx + hw);
+    const cpz = clamp(bcz, wz - hw, wz + hw);
+    const dx = bcx - cpx;
+    const dz = bcz - cpz;
+    if (dx * dx + dz * dz < r * r) {
+      dieAndReset();
+      return;
+    }
+  }
+}
+
+function checkCheckpoint() {
+  if (checkpointReached || checkpointCol === undefined) return;
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const col = Math.round(local.x + (COLS - 1) / 2);
+  const row = Math.round(local.z + (ROWS - 1) / 2);
+  if (col === checkpointCol && row === checkpointRow) {
+    checkpointReached = true;
+    // Visual notification
+    const el = document.getElementById('cp-notif');
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1200);
+  }
+}
+
+function checkWin() {
+  if (gameWon) return;
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const col = Math.round(local.x + (COLS - 1) / 2);
+  const row = Math.round(local.z + (ROWS - 1) / 2);
+  if (col === goalCol && row === goalRow) {
+    gameWon = true;
+    const t = ((Date.now() - startTime) / 1000).toFixed(1);
+    document.getElementById('final-time').textContent = t + 's';
+    document.getElementById('final-moves').textContent = moveCount;
+    document.getElementById('final-coins').textContent = coinsCollected + ' / ' + coinPositions.length;
+    setTimeout(() => document.getElementById('win-overlay').classList.add('show'), 300);
+  }
+}
+
+function checkMovingObstacles() {
+  const r = BALL_R * 0.7;
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const bcx = local.x;
+  const bcz = local.z;
+
+  for (const child of movObsGroup.children) {
+    const mo = child.userData;
+    const ox = child.position.x;
+    const oz = child.position.z;
+    const hw = CELL * 0.22;
+    const cpx = clamp(bcx, ox - hw, ox + hw);
+    const cpz = clamp(bcz, oz - hw, oz + hw);
+    const dx = bcx - cpx;
+    const dz = bcz - cpz;
+    if (dx * dx + dz * dz < r * r) {
+      dieAndReset();
+      return;
+    }
+  }
+}
+
+function checkCoinCollection() {
+  const invQ = mazeGroup.quaternion.clone().invert();
+  const local = worldToLocal(ballGroup.position.x, ballGroup.position.z, invQ);
+  const bcx = local.x;
+  const bcz = local.z;
+
+  for (const child of coinGroup.children) {
+    if (child.userData.collected) continue;
+    const dx = bcx - child.position.x;
+    const dz = bcz - child.position.z;
+    if (dx * dx + dz * dz < 0.25) {
+      child.userData.collected = true;
+      child.visible = false;
+      collectedCoins.add(child);
+      coinsCollected++;
+      document.getElementById('coin-counter').textContent = '🪙 ' + coinsCollected;
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GAME LOOP
+// ══════════════════════════════════════════════════════════════
+
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // ── Particles ──
+  for (let i = 0; i < PART_COUNT; i++) {
+    pLife[i] -= dt;
+    if (pLife[i] <= 0) resetParticle(i);
+    pPos[i * 3]     += pVelArr[i].x * dt;
+    pPos[i * 3 + 1] += pVelArr[i].y * dt;
+    pPos[i * 3 + 2] += pVelArr[i].z * dt;
+    pVelArr[i].y -= 0.2 * dt;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+
+  // ── Goal glow pulse ──
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.003);
+  goalGlow.material.opacity = pulse * 0.7;
+  goalGlow.scale.setScalar(1.5 + 0.4 * Math.sin(performance.now() * 0.0022));
+  goalMat.emissiveIntensity = 0.25 + 0.5 * pulse;
+  pillarMat.opacity = 0.2 + 0.3 * pulse;
+
+  // ── Obstacle glow pulse ──
+  const oPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.0045 + 1.2);
+  obsMat.emissiveIntensity = 0.1 + 0.25 * oPulse;
+
+  // ── Moving obstacles animation ──
+  const movPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.005 + 0.8);
+  movObsMat.emissiveIntensity = 0.1 + 0.3 * movPulse;
+  for (const child of movObsGroup.children) {
+    const mo = child.userData;
+    const phase = performance.now() * 0.001 * mo.speed + mo.phase;
+    if (mo.dir === 'x') {
+      child.position.x = mo.baseX + Math.sin(phase) * mo.range;
+    } else {
+      child.position.z = mo.baseZ + Math.sin(phase) * mo.range;
+    }
+    // Slight bobbing
+    child.position.y = Math.abs(Math.sin(phase * 1.5)) * 0.08;
+    // Rotation
+    child.rotation.y += dt * 1.5;
+  }
+
+  // ── Coin animation ──
+  const coinPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+  coinMat.emissiveIntensity = 0.3 + 0.5 * coinPulse;
+  for (const child of coinGroup.children) {
+    if (child.userData.collected) continue;
+    child.rotation.z += dt * 2.5;
+    child.position.y = WALL_H * 0.6 + Math.sin(performance.now() * 0.003 + child.userData.bobPhase) * 0.06;
+  }
+
+  // ── Ball trail update ──
+  if (!gameWon) {
+    trailTimer += dt;
+    if (trailTimer > 0.025) {
+      trailTimer = 0;
+      const idx3 = trailIdx * 3;
+      trailPositions[idx3] = ballGroup.position.x;
+      trailPositions[idx3 + 1] = ballGroup.position.y;
+      trailPositions[idx3 + 2] = ballGroup.position.z;
+      trailPosAttr.needsUpdate = true;
+      // Also update glow trail (offset)
+      const gl3 = trailIdx * 3;
+      trailGlowPos[gl3] = ballGroup.position.x;
+      trailGlowPos[gl3 + 1] = ballGroup.position.y;
+      trailGlowPos[gl3 + 2] = ballGroup.position.z;
+      trailGlowGeo.attributes.position.needsUpdate = true;
+      trailIdx = (trailIdx + 1) % TRAIL_LEN;
+    }
+  }
+
+  // ── Game logic ──
+  if (!gameWon) {
+    // ── Input → tilt targets ──
+    if (pointerDown) {
+      // tiltTarget already set by pointer events
+    } else {
+      // Auto-center when not touching
+      tiltTargetX *= CENTER_RATE;
+      tiltTargetZ *= CENTER_RATE;
+      if (Math.abs(tiltTargetX) < 0.0005) tiltTargetX = 0;
+      if (Math.abs(tiltTargetZ) < 0.0005) tiltTargetZ = 0;
+    }
+
+    // Keyboard overrides (when no pointer active)
+    const tiltUp    = pressed.has('ArrowUp')    || pressed.has('w');
+    const tiltDown  = pressed.has('ArrowDown')  || pressed.has('s');
+    const tiltLeft  = pressed.has('ArrowLeft')  || pressed.has('a');
+    const tiltRight = pressed.has('ArrowRight') || pressed.has('d');
+
+    if (tiltUp)    tiltTargetX = -MAX_TILT;
+    if (tiltDown)  tiltTargetX =  MAX_TILT;
+    if (tiltLeft)  tiltTargetZ =  MAX_TILT;
+    if (tiltRight) tiltTargetZ = -MAX_TILT;
+
+    // ── Smooth visual tilt ──
+    mazeGroup.rotation.x += (tiltTargetX - mazeGroup.rotation.x) * TILT_LERP;
+    mazeGroup.rotation.z += (tiltTargetZ - mazeGroup.rotation.z) * TILT_LERP;
+
+    // ── Physics ──
+    const rotX = mazeGroup.rotation.x;
+    const rotZ = mazeGroup.rotation.z;
+    const hasTilt = Math.abs(rotX) > 0.003 || Math.abs(rotZ) > 0.003;
+    const hasVel  = Math.abs(velX) > 0.0005 || Math.abs(velZ) > 0.0005;
+
+    if (hasTilt || hasVel) {
+      if (!gameStarted) { gameStarted = true; startTime = Date.now(); }
+
+      // Gravity: ball rolls downhill
+      const ax = -GRAVITY * Math.sin(rotZ);
+      const az =  GRAVITY * Math.sin(rotX);
+      velX += ax * dt;
+      velZ += az * dt;
+
+      // Friction (frame-rate independent)
+      const fricFactor = Math.pow(FRICTION, dt * 60);
+      velX *= fricFactor;
+      velZ *= fricFactor;
+
+      // Speed cap
+      const spd = Math.sqrt(velX * velX + velZ * velZ);
+      if (spd > MAX_SPEED) {
+        velX = (velX / spd) * MAX_SPEED;
+        velZ = (velZ / spd) * MAX_SPEED;
+      }
+
+      // Integrate position
+      ballGroup.position.x += velX * dt;
+      ballGroup.position.z += velZ * dt;
+
+      // Move counting
+      const dxM = ballGroup.position.x - lastMoveX;
+      const dzM = ballGroup.position.z - lastMoveZ;
+      if (dxM * dxM + dzM * dzM > 0.18) {
+        moveCount++;
+        lastMoveX = ballGroup.position.x;
+        lastMoveZ = ballGroup.position.z;
+      }
+    }
+
+    // ── Wall collisions ──
+    checkWallCollisions();
+
+    // ── Obstacle collisions ──
+    checkObstacles();
+
+    // ── Moving obstacle collisions ──
+    checkMovingObstacles();
+
+    // ── Coin collection ──
+    checkCoinCollection();
+
+    // ── Checkpoint ──
+    checkCheckpoint();
+
+    // ── Snap to floor height ──
+    snapToFloor();
+
+    // ── Rolling visual ──
+    if (hasVel) {
+      const spd = Math.sqrt(velX * velX + velZ * velZ);
+      if (spd > 0.001) {
+        const axis = new THREE.Vector3(-velZ, 0, velX).normalize();
+        const angle = spd * dt / BALL_R;
+        const stepQ = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+        ballRotQ.premultiply(stepQ);
+        ballGroup.quaternion.copy(ballRotQ);
+      }
+    }
+
+    // ── Win check ──
+    checkWin();
+
+    // ── Out-of-bounds ──
+    const bound = Math.max(COLS, ROWS) * 0.75;
+    if (Math.abs(ballGroup.position.x) > bound || Math.abs(ballGroup.position.z) > bound) {
+      dieAndReset();
+    }
+
+    // ── Hide hint after first movement ──
+    if (gameStarted) {
+      document.getElementById('hint').classList.add('hidden');
+    }
+  }
+
+  // ── Camera: subtle follow based on tilt ──
+  const camTX = mazeGroup.rotation.z * 1.5;
+  const camTZ = 9.5 - mazeGroup.rotation.x * 1.5;
+  camera.position.x += (camTX - camera.position.x) * 0.02;
+  camera.position.z += (camTZ - camera.position.z) * 0.02;
+  camera.lookAt(0, 0, 0);
+
+  // ── Timer ──
+  if (gameStarted && !gameWon) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    document.getElementById('timer').textContent = '⏱ ' + elapsed + 's';
+  }
+
+  // ── Render ──
+  renderer.render(scene, camera);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  UI HANDLERS
+// ══════════════════════════════════════════════════════════════
+
+document.getElementById('restart-btn').addEventListener('click', resetBall);
+document.getElementById('reset-btn') .addEventListener('click', resetBall);
+document.getElementById('center-btn').addEventListener('click', () => {
+  tiltTargetX = 0;
+  tiltTargetZ = 0;
+});
+
+// ── Rules overlay ──
+const rulesOverlay = document.getElementById('rules-overlay');
+const rulesBox = document.getElementById('rules-box');
+document.getElementById('rules-btn').addEventListener('click', () => {
+  rulesOverlay.classList.add('show');
+});
+document.getElementById('rules-close-btn').addEventListener('click', () => {
+  rulesOverlay.classList.remove('show');
+});
+rulesOverlay.addEventListener('click', (e) => {
+  if (e.target === rulesOverlay) rulesOverlay.classList.remove('show');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && rulesOverlay.classList.contains('show')) {
+    rulesOverlay.classList.remove('show');
+    e.preventDefault();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  RESIZE
+// ══════════════════════════════════════════════════════════════
+
+function onResize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+window.addEventListener('resize', onResize);
+
+// ══════════════════════════════════════════════════════════════
+//  START
+// ══════════════════════════════════════════════════════════════
+
+resetBall();
+// Show rules overlay on first load
+rulesOverlay.classList.add('show');
+animate();
+
+console.log(
+  '3D 迷宫滚球已启动!\n' +
+  `迷宫 ${COLS}×${ROWS}  起点 (${startCol},${startRow})  终点 (${goalCol},${goalRow})\n` +
+  `障碍 ${obstacles.length} 个  ${checkpointCol !== undefined ? '有存档点' : '无存档点'}\n` +
+  '方向键/WASD 或拖动鼠标倾斜平台'
+);
+</script>
+</body>
+</html>

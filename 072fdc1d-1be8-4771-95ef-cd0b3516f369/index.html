@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  核心玩法：玩家操控一个「时间晶核」，在由可滑动板块、时间裂隙和能量节点组成的等距网格中移动。晶核每步移动会留下一个时间残影，残影会复刻玩家前一步的动作。玩家需要利用残影与自身协作，推动或旋转板块改变地形，引导能量流经所有节点以激活全局。每次重置时间（回到起点）会消耗步数，但残影会保留。操作方式：鼠标点击或触屏拖拽晶核至相邻格子，点击板块可旋转（每次90度）或推拉（一格）；键盘支持WASD移动，Q/E旋转选中板块，R重置时间。视觉风格：蒸汽波风格，粉紫渐变背景，像素化霓虹光效，时间残影有半透明拖尾效果，能量节点发出脉冲波纹。胜利条件：所有能量节点被激活后，时空裂缝打开，晶核进入即通关。游戏有最大步数限制，超限则失败；若晶核被时间裂隙吞噬（掉入无节点区域）也失败。
+-->
+<meta name="description" content="核心玩法：玩家操控一个「时间晶核」，在由可滑动板块、时间裂隙和能量节点组成的等距网格中移动。晶核每步移动会留下一个时间残影，残影会复刻玩家前一步的动作。玩家需要利用残影与自身协作，推动或旋转板块改变地形，引导能量流经所有节点以激活全局。每次重置时间（回到起点）会消耗步数，但残影会保留。操作方式：鼠标点击或触屏拖拽晶核至相邻格子，点击板块可旋转（每次90度）或推拉（一格）；键盘支持WASD移动，Q/E旋转选中板块，R重置时间。视觉风格：蒸汽波风格，粉紫渐变背景，像素化霓虹光效，时间残影有半透明拖尾效果，能量节点发出脉冲波纹。胜利条件：所有能量节点被激活后，时空裂缝打开，晶核进入即通关。游戏有最大步数限制，超限则失败；若晶核被时间裂隙吞噬（掉入无节点区域）也失败。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>时间晶核 — Chrono Core</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0015;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+canvas {
+  display: block;
+  cursor: pointer;
+  image-rendering: pixelated;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ======================================================================
+//  CHRONO CORE — 时间晶核
+//  Isometric time-echo puzzle game
+// ======================================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const W = 660, H = 620;
+canvas.width = W;
+canvas.height = H;
+
+// ---- AUDIO (Web Audio) ----
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playTone(freq, type, dur, vol = 0.12) {
+  try {
+    initAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + dur);
+  } catch(e) {}
+}
+function sfxMove() { playTone(520, 'square', 0.08, 0.08); }
+function sfxNode() { playTone(880, 'sine', 0.25, 0.10); playTone(1320, 'sine', 0.15, 0.06); }
+function sfxWin()  { playTone(523, 'sine', 0.2); setTimeout(()=>playTone(659,'sine',0.2),150); setTimeout(()=>playTone(784,'sine',0.3),300); }
+function sfxLose() { playTone(220, 'sawtooth', 0.4, 0.08); }
+function sfxReset(){ playTone(300, 'triangle', 0.3, 0.07); }
+
+// ---- CONSTANTS ----
+const COLS = 6, ROWS = 5;
+const TILE_W = 80, TILE_H = 44;
+const TILE_HW = TILE_W / 2, TILE_HH = TILE_H / 2;
+const CENTER_X = W / 2, CENTER_Y = H / 2 - 10;
+const MAX_MOVES_BASE = 35;
+
+// Tile types
+const T_VOID = 0, T_FLOOR = 1, T_NODE = 2, T_PLATFORM = 3, T_START = 4, T_EXIT = 5;
+
+// Directions for isometric grid (col, row)
+const DIRS = {
+  'w':  { dc: 0, dr: -1 },  // up on screen
+  's':  { dc: 0, dr: 1 },   // down on screen
+  'a':  { dc: -1, dr: 0 },  // left on screen
+  'd':  { dc: 1, dr: 0 },   // right on screen
+};
+const KEY_DIRS = { 'w':0, 'W':0, 's':1, 'S':1, 'a':2, 'A':2, 'd':3, 'D':3,
+                   'ArrowUp':0, 'ArrowDown':1, 'ArrowLeft':2, 'ArrowRight':3 };
+const DIR_LIST = [DIRS.w, DIRS.s, DIRS.a, DIRS.d];
+
+// ---- LEVELS ----
+// Grid values: 0=void, 1=floor, 2=node, 3=platform, 4=start, 5=exit
+const LEVELS = [
+  { // Level 1 — Introduction
+    name: '初识回响',
+    grid: [
+      [1,1,1,1,1,1],
+      [1,2,1,0,2,1],
+      [1,1,4,1,1,1],
+      [1,2,1,0,2,1],
+      [1,1,1,1,1,5],
+    ],
+    maxMoves: 25,
+  },
+  { // Level 2 — Echo Dance
+    name: '残影之舞',
+    grid: [
+      [1,0,2,1,0,1],
+      [1,1,1,3,1,1],
+      [2,1,4,1,2,1],
+      [1,1,1,1,1,0],
+      [1,0,1,1,5,1],
+    ],
+    maxMoves: 30,
+  },
+  { // Level 3 — Platform Puzzle
+    name: '板块迷阵',
+    grid: [
+      [0,1,2,1,1,0],
+      [1,3,1,0,3,1],
+      [1,1,4,1,1,1],
+      [1,3,1,2,3,1],
+      [0,1,1,1,5,0],
+    ],
+    maxMoves: 35,
+  },
+  { // Level 4 — Void Walker
+    name: '裂隙穿行',
+    grid: [
+      [1,1,1,0,2,1],
+      [0,3,1,0,1,1],
+      [2,1,4,3,1,2],
+      [1,1,0,1,3,0],
+      [1,2,1,1,1,5],
+    ],
+    maxMoves: 40,
+  },
+];
+
+// ---- GAME STATE ----
+let grid = [];
+let baseGrid = []; // original level layout
+let platforms = {};  // "col,row" -> { rotation: 0..3 }
+let nodes = {};      // "col,row" -> activated (bool)
+let playerCol = 0, playerRow = 0;
+let startCol = 0, startRow = 0;
+let exitCol = -1, exitRow = -1;
+let exitVisible = false;
+let echoes = []; // [{col, row}]
+let lastMoveDir = -1; // index into DIR_LIST or -1
+let moves = 0;
+let maxMoves = MAX_MOVES_BASE;
+let currentLevel = 0;
+let gameState = 'playing'; // 'playing' | 'won' | 'lost'
+let stateTimer = 0; // for animations after win/lose
+let echoHistory = []; // list of move directions per turn
+let selectedTile = null; // {col, row} for platform rotation
+let pulseTime = 0;
+let trailParticles = []; // decorative particles
+let energyBeams = []; // energy flow between activated nodes
+let levelName = '';
+let resetFlash = 0; // flash alpha for time reset effect
+
+// ---- ISO UTILITIES ----
+function toScreen(col, row) {
+  return {
+    x: CENTER_X + (col - row) * TILE_HW,
+    y: CENTER_Y + (col + row) * TILE_HH
+  };
+}
+
+function toGrid(sx, sy) {
+  const dx = sx - CENTER_X;
+  const dy = sy - CENTER_Y;
+  const col = (dx / TILE_HW + dy / TILE_HH) / 2;
+  const row = (dy / TILE_HH - dx / TILE_HW) / 2;
+  return { col: Math.round(col), row: Math.round(row) };
+}
+
+function inBounds(c, r) { return c >= 0 && c < COLS && r >= 0 && r < ROWS; }
+function tileKey(c, r) { return c + ',' + r; }
+function getTile(c, r) { return inBounds(c, r) ? grid[r][c] : -1; }
+function isWalkable(c, r) {
+  const t = getTile(c, r);
+  return t === T_FLOOR || t === T_NODE || t === T_PLATFORM || t === T_EXIT || t === T_START;
+}
+function isVoid(c, r) { return getTile(c, r) === T_VOID; }
+function hasPlatform(c, r) { return platforms[tileKey(c, r)] !== undefined; }
+function isNode(c, r) { return getTile(c, r) === T_NODE; }
+function isNodeActive(c, r) { return !!nodes[tileKey(c, r)]; }
+function canPlatformMoveTo(c, r) {
+  return inBounds(c, r) && getTile(c, r) !== T_VOID && getTile(c, r) !== T_NODE && getTile(c, r) !== -1 && !hasPlatform(c, r);
+}
+
+// ---- LEVEL LOADING ----
+function loadLevel(idx) {
+  if (idx < 0 || idx >= LEVELS.length) idx = 0;
+  const level = LEVELS[idx];
+  currentLevel = idx;
+  levelName = level.name;
+  maxMoves = level.maxMoves;
+  baseGrid = level.grid.map(row => [...row]);
+
+  // Reset state
+  grid = baseGrid.map(row => [...row]);
+  platforms = {};
+  nodes = {};
+  echoes = [];
+  trailParticles = [];
+  energyBeams = [];
+  lastMoveDir = -1;
+  moves = 0;
+  exitVisible = false;
+  selectedTile = null;
+  gameState = 'playing';
+  stateTimer = 0;
+  echoHistory = [];
+
+  // Find start and exit
+  startCol = -1; startRow = -1;
+  exitCol = -1; exitRow = -1;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = grid[r][c];
+      if (t === T_START) { startCol = c; startRow = r; }
+      if (t === T_EXIT) { exitCol = c; exitRow = r; }
+    }
+  }
+  playerCol = startCol;
+  playerRow = startRow;
+
+  // Initialize platform data
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] === T_PLATFORM) {
+        platforms[tileKey(c, r)] = { rotation: 0 };
+      }
+    }
+  }
+
+  // Add particles for level start
+  for (let i = 0; i < 30; i++) {
+    trailParticles.push(createParticle(playerCol, playerRow, true));
+  }
+}
+
+function countNodes() {
+  let n = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (grid[r][c] === T_NODE) n++;
+  return n;
+}
+
+function countActivatedNodes() {
+  let a = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (grid[r][c] === T_NODE && nodes[tileKey(c, r)]) a++;
+  return a;
+}
+
+// ---- PARTICLES ----
+function createParticle(col, row, randomOffset = false) {
+  const s = toScreen(col, row);
+  return {
+    x: s.x + (randomOffset ? (Math.random() - 0.5) * 30 : 0),
+    y: s.y + (randomOffset ? (Math.random() - 0.5) * 30 : 0),
+    vx: (Math.random() - 0.5) * 1.5,
+    vy: (Math.random() - 0.5) * 1.5 - 0.5,
+    life: 0.7 + Math.random() * 0.3,
+    decay: 0.005 + Math.random() * 0.01,
+    size: 2 + Math.random() * 3,
+    hue: 280 + Math.random() * 60, // pink-purple range
+  };
+}
+
+function emitParticles(col, row, count = 12) {
+  for (let i = 0; i < count; i++) {
+    trailParticles.push(createParticle(col, row));
+  }
+}
+
+// ---- GAME LOGIC ----
+function canMoveTo(c, r) {
+  if (!inBounds(c, r)) return false;
+  const t = getTile(c, r);
+  if (t === T_VOID || t === -1) return false;
+  return true;
+}
+
+function movePlayer(dirIdx) {
+  if (gameState !== 'playing') return;
+  const dir = DIR_LIST[dirIdx];
+  if (!dir) return;
+
+  const nc = playerCol + dir.dc;
+  const nr = playerRow + dir.dr;
+  if (!canMoveTo(nc, nr)) return;
+
+  // Check if target is a platform — push it
+  if (getTile(nc, nr) === T_PLATFORM) {
+    // Platform slides one tile further in the same direction
+    const pc = nc + dir.dc;
+    const pr = nr + dir.dr;
+    if (!canPlatformMoveTo(pc, pr)) {
+      return; // Can't push platform
+    }
+    // Push platform
+    const pkey = tileKey(nc, nr);
+    const pData = platforms[pkey];
+    delete platforms[pkey];
+    grid[nr][nc] = (nc === exitCol && nr === exitRow) ? T_EXIT : T_FLOOR;
+    grid[pr][pc] = T_PLATFORM;
+    platforms[tileKey(pc, pr)] = pData;
+  }
+
+  // Record the move for echo history
+  echoHistory.push(dirIdx);
+
+  // Move all existing echoes first (they copy the player's current direction)
+  for (let i = 0; i < echoes.length; i++) {
+    const e = echoes[i];
+    const en = e.col + dir.dc;
+    const er = e.row + dir.dr;
+
+    // Check if echo steps on void
+    if (isVoid(en, er) || !inBounds(en, er)) {
+      echoes.splice(i, 1);
+      i--;
+      emitParticles(e.col, e.row, 15);
+      continue;
+    }
+
+    // Check if echo steps on a platform — push it
+    if (getTile(en, er) === T_PLATFORM) {
+      const pc = en + dir.dc;
+      const pr = er + dir.dr;
+      if (canPlatformMoveTo(pc, pr)) {
+        const pkey = tileKey(en, er);
+        const pData = platforms[pkey];
+        delete platforms[pkey];
+        grid[er][en] = (en === exitCol && er === exitRow) ? T_EXIT : T_FLOOR;
+        grid[pr][pc] = T_PLATFORM;
+        platforms[tileKey(pc, pr)] = pData;
+      } else {
+        // Platform blocks echo
+        echoes.splice(i, 1);
+        i--;
+        emitParticles(e.col, e.row, 15);
+        continue;
+      }
+    }
+
+    // Check if echo steps on node
+    if (isNode(en, er)) {
+      activateNode(en, er);
+    }
+
+    e.col = en;
+    e.row = er;
+  }
+
+  // Spawn echo at player's old position
+  echoes.push({ col: playerCol, row: playerRow });
+  // Limit max echoes for performance
+  if (echoes.length > 30) echoes.splice(0, echoes.length - 30);
+  emitParticles(playerCol, playerRow, 8);
+
+  // Move player
+  playerCol = nc;
+  playerRow = nr;
+  moves++;
+  lastMoveDir = dirIdx;
+  sfxMove();
+
+  // Check player on node
+  if (isNode(playerCol, playerRow)) {
+    activateNode(playerCol, playerRow);
+  }
+
+  // Check player on void (shouldn't happen since canMoveTo prevents it, but safety)
+  if (isVoid(playerCol, playerRow)) {
+    gameState = 'lost';
+    stateTimer = 0;
+    sfxLose();
+    return;
+  }
+
+  // Check if player steps on exit
+  if (exitVisible && playerCol === exitCol && playerRow === exitRow) {
+    gameState = 'won';
+    stateTimer = 0;
+    sfxWin();
+    return;
+  }
+
+  // Check if player steps on void echo (game over)
+  // (already handled)
+
+  // Check moves exceeded
+  if (moves >= maxMoves) {
+    gameState = 'lost';
+    stateTimer = 0;
+    sfxLose();
+    return;
+  }
+
+  // Check win condition
+  checkWinCondition();
+
+  // Clear selected tile
+  selectedTile = null;
+}
+
+function activateNode(c, r) {
+  if (!isNode(c, r)) return;
+  const key = tileKey(c, r);
+  if (!nodes[key]) {
+    nodes[key] = true;
+    sfxNode();
+    emitParticles(c, r, 20);
+    checkWinCondition();
+  }
+}
+
+function checkWinCondition() {
+  const total = countNodes();
+  const active = countActivatedNodes();
+  if (total > 0 && active >= total) {
+    exitVisible = true;
+    // Also check if player is already on exit
+    if (playerCol === exitCol && playerRow === exitRow) {
+      gameState = 'won';
+      stateTimer = 0;
+      sfxWin();
+    }
+  }
+}
+
+function resetTime() {
+  if (gameState !== 'playing') return;
+  if (moves >= maxMoves) return;
+
+  // Player goes back to start
+  playerCol = startCol;
+  playerRow = startRow;
+  moves++;
+  sfxReset();
+
+  // Emit particles at reset
+  emitParticles(startCol, startRow, 20);
+  emitParticles(playerCol, playerRow, 10);
+  resetFlash = 0.5;
+
+  // Check moves exceeded
+  if (moves >= maxMoves) {
+    // But the player is back at start, check if that's safe
+    gameState = 'lost';
+    stateTimer = 0;
+    sfxLose();
+    return;
+  }
+
+  selectedTile = null;
+}
+
+function rotatePlatform(c, r, direction) {
+  // direction: 1 = clockwise (E), -1 = counter-clockwise (Q)
+  const key = tileKey(c, r);
+  if (!platforms[key]) return;
+  if (gameState !== 'playing') return;
+
+  const p = platforms[key];
+  p.rotation = ((p.rotation + direction) % 4 + 4) % 4;
+  playTone(400 + p.rotation * 100, 'sine', 0.1, 0.05);
+  emitParticles(c, r, 6);
+}
+
+// ---- INPUT HANDLING ----
+// Keyboard
+document.addEventListener('keydown', e => {
+  const key = e.key;
+
+  // WASD / Arrow keys for movement
+  if (key in KEY_DIRS) {
+    e.preventDefault();
+    movePlayer(KEY_DIRS[key]);
+    return;
+  }
+
+  // Q rotate selected platform counter-clockwise
+  if (key === 'q' || key === 'Q') {
+    e.preventDefault();
+    if (selectedTile) {
+      rotatePlatform(selectedTile.col, selectedTile.row, -1);
+    }
+    return;
+  }
+
+  // E rotate selected platform clockwise
+  if (key === 'e' || key === 'E') {
+    e.preventDefault();
+    if (selectedTile) {
+      rotatePlatform(selectedTile.col, selectedTile.row, 1);
+    }
+    return;
+  }
+
+  // R reset time
+  if (key === 'r' || key === 'R') {
+    e.preventDefault();
+    resetTime();
+    return;
+  }
+
+  // Space or Enter on win screen to next level
+  if ((key === ' ' || key === 'Enter') && gameState === 'won') {
+    e.preventDefault();
+    if (currentLevel + 1 < LEVELS.length) {
+      loadLevel(currentLevel + 1);
+    } else {
+      loadLevel(0);
+    }
+    return;
+  }
+
+  // R on lose/gameover to restart
+  if ((key === 'r' || key === 'R') && (gameState === 'lost' || gameState === 'won')) {
+    e.preventDefault();
+    loadLevel(currentLevel);
+    return;
+  }
+});
+
+// Mouse / Touch
+function handlePointer(mx, my) {
+  if (gameState === 'won') {
+    // Click to continue
+    if (currentLevel + 1 < LEVELS.length) {
+      loadLevel(currentLevel + 1);
+    } else {
+      loadLevel(0);
+    }
+    return;
+  }
+  if (gameState === 'lost') {
+    loadLevel(currentLevel);
+    return;
+  }
+
+  // Convert to grid coordinates
+  const g = toGrid(mx, my);
+  if (!inBounds(g.col, g.row)) return;
+
+  // Check if clicking on a platform adjacent to player
+  const dist = Math.abs(g.col - playerCol) + Math.abs(g.row - playerRow);
+
+  if (getTile(g.col, g.row) === T_PLATFORM && dist <= 2) {
+    // Select platform for rotation
+    selectedTile = { col: g.col, row: g.row };
+    return;
+  }
+
+  // Try to move player to clicked adjacent tile
+  if (dist === 1) {
+    // Find which direction
+    for (let i = 0; i < DIR_LIST.length; i++) {
+      const d = DIR_LIST[i];
+      if (playerCol + d.dc === g.col && playerRow + d.dr === g.row) {
+        movePlayer(i);
+        return;
+      }
+    }
+  }
+
+  // Click on exit tile if visible
+  if (exitVisible && g.col === exitCol && g.row === exitRow && dist === 1) {
+    for (let i = 0; i < DIR_LIST.length; i++) {
+      const d = DIR_LIST[i];
+      if (playerCol + d.dc === g.col && playerRow + d.dr === g.row) {
+        movePlayer(i);
+        return;
+      }
+    }
+  }
+
+  selectedTile = null;
+}
+
+// Click
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+  handlePointer(mx, my);
+});
+
+// Touch
+let touchStartX = 0, touchStartY = 0;
+let touchEndX = 0, touchEndY = 0;
+let isTouching = false;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  touchEndX = touchStartX;
+  touchEndY = touchStartY;
+  isTouching = true;
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  touchEndX = t.clientX;
+  touchEndY = t.clientY;
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!isTouching) return;
+  isTouching = false;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  const dx = touchEndX - touchStartX;
+  const dy = touchEndY - touchStartY;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+
+  if (dist > 20) {
+    // Swipe to move in screen direction
+    if (Math.abs(dx) > Math.abs(dy)) {
+      movePlayer(dx > 0 ? 3 : 2); // D:3, A:2
+    } else {
+      movePlayer(dy > 0 ? 1 : 0); // S:1, W:0
+    }
+  } else {
+    // Tap: convert to grid coordinates
+    const mx = (touchStartX - rect.left) * scaleX;
+    const my = (touchStartY - rect.top) * scaleY;
+    handlePointer(mx, my);
+  }
+}, { passive: false });
+
+// ---- RENDERING ----
+function drawIsometricTile(c, r, fillColor, strokeColor, glowColor, alpha = 1) {
+  const s = toScreen(c, r);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y - TILE_HH);
+  ctx.lineTo(s.x + TILE_HW, s.y);
+  ctx.lineTo(s.x, s.y + TILE_HH);
+  ctx.lineTo(s.x - TILE_HW, s.y);
+  ctx.closePath();
+
+  if (fillColor) {
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+  }
+  if (glowColor) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 12;
+  }
+  if (strokeColor) {
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawGlowDiamond(sx, sy, size, color, glow) {
+  ctx.save();
+  ctx.shadowColor = glow;
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - size);
+  ctx.lineTo(sx + size * 0.7, sy);
+  ctx.lineTo(sx, sy + size);
+  ctx.lineTo(sx - size * 0.7, sy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner highlight
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - size * 0.5);
+  ctx.lineTo(sx + size * 0.35, sy);
+  ctx.lineTo(sx, sy + size * 0.5);
+  ctx.lineTo(sx - size * 0.35, sy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPulseRing(sx, sy, radius, color, pulse) {
+  const r = radius + Math.sin(pulse * 3) * 4;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 15;
+  ctx.globalAlpha = 0.5 + Math.sin(pulse * 3) * 0.3;
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBackground() {
+  // Vaporwave gradient background
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0a0015');
+  grad.addColorStop(0.3, '#1a0033');
+  grad.addColorStop(0.6, '#2d004d');
+  grad.addColorStop(0.85, '#4a0066');
+  grad.addColorStop(1, '#1a0033');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Vaporwave sun
+  const sunY = H * 0.25;
+  const sunGrad = ctx.createRadialGradient(W/2, sunY, 10, W/2, sunY, 120);
+  sunGrad.addColorStop(0, 'rgba(255, 100, 200, 0.25)');
+  sunGrad.addColorStop(0.4, 'rgba(200, 50, 150, 0.12)');
+  sunGrad.addColorStop(1, 'rgba(200, 50, 150, 0)');
+  ctx.fillStyle = sunGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.03)';
+  for (let y = 0; y < H; y += 3) {
+    ctx.fillRect(0, y, W, 1);
+  }
+
+  // Grid lines in background
+  ctx.strokeStyle = 'rgba(200, 100, 255, 0.04)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 20; i++) {
+    const y = i * 35;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 25; i++) {
+    const x = i * 30;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+}
+
+function drawTile(c, r, val, key) {
+  if (val === T_VOID) {
+    // Draw time rift as dark void
+    drawIsometricTile(c, r, 'rgba(10, 0, 20, 0.6)', 'rgba(80, 0, 120, 0.2)', 'rgba(80, 0, 120, 0.1)', 0.6);
+    // Inner darker area
+    const s = toScreen(c, r);
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = '#050010';
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y - TILE_HH * 0.6);
+    ctx.lineTo(s.x + TILE_HW * 0.6, s.y);
+    ctx.lineTo(s.x, s.y + TILE_HH * 0.6);
+    ctx.lineTo(s.x - TILE_HW * 0.6, s.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  const isPlat = hasPlatform(c, r);
+  const isSelected = selectedTile && selectedTile.col === c && selectedTile.row === r;
+
+  let fillColor, strokeColor, glowColor;
+
+  switch (val) {
+    case T_FLOOR:
+      fillColor = '#1a0a2e';
+      strokeColor = 'rgba(180, 80, 255, 0.3)';
+      glowColor = null;
+      break;
+    case T_NODE: {
+      const active = !!nodes[key];
+      const pulse = pulseTime + c * 0.5 + r * 0.7;
+      const bright = 0.4 + Math.sin(pulse * 2) * 0.2;
+      if (active) {
+        fillColor = `rgba(0, 255, 180, ${0.3 + bright * 0.4})`;
+        strokeColor = '#00ffc8';
+        glowColor = 'rgba(0, 255, 200, 0.6)';
+      } else {
+        fillColor = `rgba(100, 50, 180, ${0.2 + bright * 0.3})`;
+        strokeColor = `rgba(180, 100, 255, ${0.3 + bright * 0.4})`;
+        glowColor = 'rgba(150, 80, 255, 0.3)';
+      }
+      break;
+    }
+    case T_PLATFORM: {
+      const rot = isPlat ? platforms[key].rotation : 0;
+      const colors = ['#3a1a5e', '#2a4a6e', '#3a2a4e', '#4a2a5e'];
+      fillColor = colors[rot % colors.length];
+      strokeColor = '#ff66b2';
+      glowColor = 'rgba(255, 100, 180, 0.3)';
+      if (isSelected) {
+        strokeColor = '#ff00ff';
+        glowColor = 'rgba(255, 0, 255, 0.6)';
+      }
+      break;
+    }
+    case T_START:
+      fillColor = '#1a0a3e';
+      strokeColor = 'rgba(100, 200, 255, 0.3)';
+      glowColor = null;
+      break;
+    case T_EXIT:
+      if (exitVisible) {
+        const pulse = pulseTime * 2;
+        const bright = 0.5 + Math.sin(pulse) * 0.3;
+        fillColor = `rgba(255, 0, 150, ${0.2 + bright * 0.3})`;
+        strokeColor = '#ff0099';
+        glowColor = `rgba(255, 0, 150, ${0.3 + bright * 0.4})`;
+      } else {
+        fillColor = '#1a0a2e';
+        strokeColor = 'rgba(80, 80, 80, 0.2)';
+        glowColor = null;
+      }
+      break;
+    default:
+      fillColor = '#1a0a2e';
+      strokeColor = 'rgba(80, 80, 80, 0.2)';
+      glowColor = null;
+  }
+
+  const alpha = val === T_EXIT && !exitVisible ? 0.3 : 1;
+  drawIsometricTile(c, r, fillColor, strokeColor, glowColor, alpha);
+}
+
+function drawTileOverlays(c, r, val, key, s) {
+  // Platform direction arrow
+  if (hasPlatform(c, r)) {
+    const rot = platforms[key].rotation;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(rot * Math.PI / 2);
+    ctx.fillStyle = 'rgba(255, 150, 200, 0.6)';
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('▶', 0, 0);
+    ctx.restore();
+  }
+
+  // Node pulse ring
+  if (val === T_NODE) {
+    const active = !!nodes[key];
+    const pulse = pulseTime + c + r;
+    const radius = active ? 8 : 5;
+    const color = active ? '#00ffc8' : '#b060ff';
+    drawPulseRing(s.x, s.y, radius, color, pulse);
+
+    if (active) {
+      ctx.save();
+      const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, 10);
+      grad.addColorStop(0, 'rgba(0, 255, 200, 0.4)');
+      grad.addColorStop(1, 'rgba(0, 255, 200, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Exit portal effect
+  if (val === T_EXIT && exitVisible) {
+    const pulse = pulseTime * 3;
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      const angle = pulse + i * Math.PI * 2 / 3;
+      const radius = 6 + Math.sin(pulse + i) * 3;
+      const px = s.x + Math.cos(angle) * radius;
+      const py = s.y + Math.sin(angle) * radius * 0.6;
+      ctx.fillStyle = `rgba(255, 0, 200, ${0.3 + Math.sin(pulse + i) * 0.2})`;
+      ctx.shadowColor = '#ff0099';
+      ctx.shadowBlur = 15;
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+function drawEcho(c, r, s) {
+  const echoIdx = echoes.findIndex(ec => ec.col === c && ec.row === r);
+  const alpha = Math.max(0.25, 0.6 - echoIdx * 0.04);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.shadowColor = 'rgba(100, 200, 255, 0.5)';
+  ctx.shadowBlur = 15;
+
+  ctx.fillStyle = 'rgba(150, 220, 255, 0.5)';
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y - 12);
+  ctx.lineTo(s.x + 8, s.y);
+  ctx.lineTo(s.x, s.y + 12);
+  ctx.lineTo(s.x - 8, s.y);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(200, 240, 255, 0.2)';
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y - 6);
+  ctx.lineTo(s.x + 4, s.y);
+  ctx.lineTo(s.x, s.y + 6);
+  ctx.lineTo(s.x - 4, s.y);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+
+  if (Math.random() < 0.3) {
+    trailParticles.push(createParticle(c, r));
+  }
+}
+
+function drawPlayer(c, r, s) {
+  const pulse = Math.sin(pulseTime * 2) * 2;
+
+  ctx.save();
+  ctx.shadowColor = '#00ccff';
+  ctx.shadowBlur = 25;
+
+  const grad = ctx.createLinearGradient(s.x, s.y - 18, s.x, s.y + 18);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.3, '#66eeff');
+  grad.addColorStop(0.6, '#4488ff');
+  grad.addColorStop(1, '#2244aa');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y - 16 - pulse);
+  ctx.lineTo(s.x + 11, s.y);
+  ctx.lineTo(s.x, s.y + 16 + pulse);
+  ctx.lineTo(s.x - 11, s.y);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y - 8 - pulse * 0.5);
+  ctx.lineTo(s.x + 5, s.y);
+  ctx.lineTo(s.x, s.y + 4);
+  ctx.lineTo(s.x - 3, s.y);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.beginPath();
+  ctx.arc(s.x - 3, s.y - 6, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  if (Math.random() < 0.5) {
+    trailParticles.push(createParticle(c, r));
+  }
+}
+
+function drawEnergyBeams() {
+  const activeNodes = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] === T_NODE && nodes[tileKey(c, r)]) {
+        activeNodes.push({ col: c, row: r });
+      }
+    }
+  }
+
+  if (activeNodes.length < 2) return;
+
+  // Draw beams between connected active nodes
+  for (let i = 0; i < activeNodes.length - 1; i++) {
+    const a = activeNodes[i];
+    const b = activeNodes[i + 1];
+    const s1 = toScreen(a.col, a.row);
+    const s2 = toScreen(b.col, b.row);
+
+    ctx.save();
+    ctx.shadowColor = '#00ffc8';
+    ctx.shadowBlur = 10;
+    ctx.strokeStyle = 'rgba(0, 255, 200, 0.25)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 6]);
+    ctx.lineDashOffset = -pulseTime * 20;
+    ctx.beginPath();
+    ctx.moveTo(s1.x, s1.y);
+    ctx.lineTo(s2.x, s2.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawParticles() {
+  for (const p of trailParticles) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = `hsl(${p.hue}, 100%, ${50 + p.life * 40}%)`;
+    ctx.shadowColor = `hsl(${p.hue}, 100%, 70%)`;
+    ctx.shadowBlur = 8;
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    ctx.restore();
+  }
+}
+
+function drawHUD() {
+  const totalNodes = countNodes();
+  const activeNodes = countActivatedNodes();
+
+  // Title
+  ctx.save();
+  ctx.fillStyle = '#ff66b2';
+  ctx.font = 'bold 16px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = '#ff66b2';
+  ctx.shadowBlur = 8;
+  ctx.fillText('◈ 时间晶核 · CHRONO CORE ◈', 20, 28);
+  ctx.shadowBlur = 0;
+
+  // Level name
+  ctx.fillStyle = '#b080ff';
+  ctx.font = '12px "Courier New", monospace';
+  ctx.fillText('Lv.' + (currentLevel + 1) + ' ' + levelName, 20, 48);
+  ctx.restore();
+
+  // Right side stats
+  ctx.save();
+  ctx.textAlign = 'right';
+  ctx.font = '13px "Courier New", monospace';
+
+  // Steps
+  const movesColor = moves >= maxMoves * 0.8 ? '#ff4477' : '#88ccff';
+  ctx.fillStyle = movesColor;
+  ctx.shadowColor = movesColor;
+  ctx.shadowBlur = 4;
+  ctx.fillText('步数: ' + moves + ' / ' + maxMoves, W - 20, 28);
+  ctx.shadowBlur = 0;
+
+  // Nodes
+  const nodeColor = activeNodes >= totalNodes ? '#00ffc8' : '#ffcc44';
+  ctx.fillStyle = nodeColor;
+  ctx.shadowColor = nodeColor;
+  ctx.shadowBlur = 4;
+  ctx.fillText('节点: ' + activeNodes + ' / ' + totalNodes, W - 20, 48);
+  ctx.shadowBlur = 0;
+
+  // Echo count
+  ctx.fillStyle = '#88aaff';
+  ctx.fillText('残影: ' + echoes.length, W - 20, 68);
+  ctx.restore();
+
+  // Controls hint (bottom)
+  ctx.save();
+  ctx.fillStyle = 'rgba(180, 140, 255, 0.5)';
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('WASD移动 | Q/E旋转板块 | R重置时间 | 点击选择板块或移动', W/2, H - 12);
+  ctx.restore();
+
+  // Exit hint
+  if (exitVisible) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 0, 150, 0.6)';
+    ctx.font = '11px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#ff0099';
+    ctx.shadowBlur = 10;
+    ctx.fillText('✦ 时空裂缝已开启 — 前往出口！ ✦', W/2, H - 30);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // Selected platform indicator
+  if (selectedTile) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 0, 255, 0.5)';
+    ctx.font = '10px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('按 Q/E 旋转板块', W/2, 90);
+    ctx.restore();
+  }
+}
+
+function drawOverlay() {
+  if (gameState === 'playing') return;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  if (gameState === 'won') {
+    // Win screen
+    ctx.shadowColor = '#00ffc8';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#00ffc8';
+    ctx.font = 'bold 42px "Courier New", monospace';
+    ctx.fillText('✦ 通关 ✦', W/2, H/2 - 60);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ccddff';
+    ctx.font = '18px "Courier New", monospace';
+    ctx.fillText('所有能量节点已激活', W/2, H/2);
+    ctx.fillText('用时 ' + moves + ' 步 / 上限 ' + maxMoves + ' 步', W/2, H/2 + 30);
+
+    if (currentLevel + 1 < LEVELS.length) {
+      ctx.fillStyle = '#ff66b2';
+      ctx.font = '16px "Courier New", monospace';
+      ctx.shadowColor = '#ff66b2';
+      ctx.shadowBlur = 8;
+      ctx.fillText('点击或按空格进入下一关', W/2, H/2 + 80);
+    } else {
+      ctx.fillStyle = '#ffcc44';
+      ctx.font = '16px "Courier New", monospace';
+      ctx.shadowColor = '#ffcc44';
+      ctx.shadowBlur = 8;
+      ctx.fillText('✦ 恭喜通关全部关卡！点击重新开始 ✦', W/2, H/2 + 80);
+    }
+  } else if (gameState === 'lost') {
+    ctx.shadowColor = '#ff0044';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#ff0044';
+    ctx.font = 'bold 36px "Courier New", monospace';
+
+    if (moves >= maxMoves) {
+      ctx.fillText('⏱ 步数耗尽', W/2, H/2 - 50);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ff6688';
+      ctx.font = '16px "Courier New", monospace';
+      ctx.fillText('时间晶核能量枯竭...', W/2, H/2);
+    } else {
+      ctx.fillText('✦ 陷落裂隙 ✦', W/2, H/2 - 50);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ff6688';
+      ctx.font = '16px "Courier New", monospace';
+      ctx.fillText('晶核被时间裂隙吞噬', W/2, H/2);
+    }
+
+    ctx.fillStyle = '#b080ff';
+    ctx.font = '15px "Courier New", monospace';
+    ctx.shadowColor = '#b080ff';
+    ctx.shadowBlur = 6;
+    ctx.fillText('按 R 或点击重新挑战', W/2, H/2 + 60);
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// ---- GAME LOOP ----
+function update() {
+  pulseTime += 0.02;
+  if (stateTimer < 999) stateTimer++;
+  if (resetFlash > 0) resetFlash -= 0.02;
+
+  // Update particles
+  for (let i = trailParticles.length - 1; i >= 0; i--) {
+    const p = trailParticles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.02;
+    p.life -= p.decay;
+    if (p.life <= 0) {
+      trailParticles.splice(i, 1);
+    }
+  }
+
+  // Cap particles
+  if (trailParticles.length > 200) {
+    trailParticles.splice(0, trailParticles.length - 200);
+  }
+}
+
+function render() {
+  drawBackground();
+
+  // Build combined depth-sorted render queue
+  const renderQueue = [];
+
+  // Add tiles (including voids for visual)
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      renderQueue.push({
+        type: 'tile',
+        col: c, row: r,
+        depth: r + c,
+        sort: r + c
+      });
+    }
+  }
+
+  // Add echoes
+  for (const e of echoes) {
+    renderQueue.push({
+      type: 'echo',
+      col: e.col, row: e.row,
+      depth: e.col + e.row,
+      sort: e.col + e.row + 0.5
+    });
+  }
+
+  // Add player
+  renderQueue.push({
+    type: 'player',
+    col: playerCol, row: playerRow,
+    depth: playerCol + playerRow,
+    sort: playerCol + playerRow + 0.9
+  });
+
+  // Sort by depth for correct isometric rendering
+  renderQueue.sort((a, b) => a.sort - b.sort);
+
+  // Render all items in order
+  for (const item of renderQueue) {
+    const c = item.col, r = item.row;
+    const s = toScreen(c, r);
+    const val = getTile(c, r);
+    const key = tileKey(c, r);
+
+    if (item.type === 'tile') {
+      drawTile(c, r, val, key);
+      drawTileOverlays(c, r, val, key, s);
+    } else if (item.type === 'echo') {
+      drawEcho(c, r, s);
+    } else if (item.type === 'player') {
+      drawPlayer(c, r, s);
+    }
+  }
+
+  drawEnergyBeams();
+  drawParticles();
+  drawHUD();
+  // Time reset flash
+  if (resetFlash > 0) {
+    ctx.save();
+    ctx.fillStyle = `rgba(180, 200, 255, ${resetFlash * 0.4})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+  drawOverlay();
+}
+
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// ---- RESIZE ----
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H, 1.2);
+  canvas.style.width = (W * scale) + 'px';
+  canvas.style.height = (H * scale) + 'px';
+}
+window.addEventListener('resize', resize);
+
+// ---- BOOT ----
+loadLevel(0);
+resize();
+gameLoop();
+
+</script>
+</body>
+</html>

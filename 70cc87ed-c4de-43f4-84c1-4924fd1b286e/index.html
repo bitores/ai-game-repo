@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>时空裂隙 · 子弹时间</title>
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+body {
+    background: #06060f;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'Segoe UI', sans-serif;
+    overflow: hidden;
+    cursor: crosshair;
+    touch-action: none;
+}
+canvas {
+    display: block;
+    border-radius: 8px;
+    box-shadow: 0 0 60px rgba(78, 204, 163, 0.15);
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+//  CANVAS SETUP
+// ============================================================
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+const W = 800,
+    H = 550
+canvas.width = W
+canvas.height = H
+
+// ============================================================
+//  UTILITY
+// ============================================================
+function dist(x1, y1, x2, y2) {
+    return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+}
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)) }
+function rand(min, max) { return min + Math.random() * (max - min) }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)) }
+
+// ============================================================
+//  GAME STATE
+// ============================================================
+let score = 0
+let gameOver = false
+let gameWon = false
+let wave = 1
+let enemiesSpawned = 0
+let enemiesPerWave = 5
+const MAX_WAVE = 12
+
+// ============================================================
+//  PLAYER
+// ============================================================
+const player = {
+    x: W / 2,
+    y: H / 2,
+    r: 17,
+    speed: 4.2,
+    hp: 6,
+    maxHp: 6,
+    invincible: 0,
+    // 能量
+    energy: 100,
+    maxEnergy: 100,
+    energyRegen: 3.5, // 每秒恢复
+}
+
+// ============================================================
+//  TIME RIFT 技能系统
+// ============================================================
+const timeRift = {
+    active: false,
+    startX: 0,
+    startY: 0,
+    duration: 2200, // 毫秒
+    timer: 0,
+    cooldown: 0,
+    maxCooldown: 4000, // 毫秒
+    energyCost: 28,
+    // 敌人速度倍率
+    slowFactor: 0.12,
+    // 玩家加速
+    speedBoost: 1.35,
+    // 分数倍率
+    scoreMultiplier: 3,
+    // 特效
+    flashAlpha: 0,
+}
+
+// ============================================================
+//  BULLETS
+// ============================================================
+let bullets = []
+const BULLET_SPEED = 9
+const FIRE_RATE = 9
+let fireCooldown = 0
+
+// ============================================================
+//  ENEMIES
+// ============================================================
+let enemies = []
+const ENEMY_BASE_RADIUS = 13
+
+// ============================================================
+//  PARTICLES
+// ============================================================
+let particles = []
+
+// ============================================================
+//  TIME TRAIL  (位置历史)
+// ============================================================
+let positionHistory = []
+const HISTORY_MAX = 90
+
+// ============================================================
+//  INPUT
+// ============================================================
+const keys = {}
+let mouseX = W / 2,
+    mouseY = H / 2
+let mouseDown = false
+
+document.addEventListener('keydown', e => {
+    keys[e.key] = true
+    if (e.key === 'r' || e.key === 'R') {
+        if (gameOver || gameWon) restart()
+    }
+    // Q 键激活时间回溯
+    if ((e.key === 'q' || e.key === 'Q') && !timeRift.active && timeRift.cooldown <= 0 && player.energy >= timeRift
+        .energyCost && !gameOver && !gameWon) {
+        activateTimeRift()
+    }
+})
+document.addEventListener('keyup', e => { keys[e.key] = false })
+
+document.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect()
+    const sx = canvas.width / rect.width
+    const sy = canvas.height / rect.height
+    mouseX = (e.clientX - rect.left) * sx
+    mouseY = (e.clientY - rect.top) * sy
+})
+document.addEventListener('mousedown', e => { mouseDown = true })
+document.addEventListener('mouseup', e => { mouseDown = false })
+
+// Touch
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width,
+        sy = canvas.height / rect.height;
+    mouseX = (t.clientX - rect.left) * sx;
+    mouseY = (t.clientY - rect.top) * sy;
+    mouseDown = true
+})
+canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width,
+        sy = canvas.height / rect.height;
+    mouseX = (t.clientX - rect.left) * sx;
+    mouseY = (t.clientY - rect.top) * sy
+})
+canvas.addEventListener('touchend', e => { e.preventDefault();
+    mouseDown = false })
+
+// ============================================================
+//  SKILL: 激活时间回溯
+// ============================================================
+function activateTimeRift() {
+    if (timeRift.active) return
+    if (timeRift.cooldown > 0) return
+    if (player.energy < timeRift.energyCost) return
+    if (gameOver || gameWon) return
+
+    timeRift.active = true
+    timeRift.startX = player.x
+    timeRift.startY = player.y
+    timeRift.timer = timeRift.duration
+    timeRift.flashAlpha = 0.6
+
+    player.energy -= timeRift.energyCost
+
+    // 清空历史并记录起始点
+    positionHistory = []
+    positionHistory.push({ x: player.x, y: player.y })
+
+    // 起始爆发粒子
+    for (let i = 0; i < 40; i++) {
+        const angle = rand(0, Math.PI * 2)
+        const speed = rand(2, 7)
+        particles.push({
+            x: player.x,
+            y: player.y,
+            r: rand(2, 5),
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: rand(20, 50),
+            maxLife: 50,
+            color: '#4ee0ff',
+            type: 'time'
+        })
+    }
+}
+
+// ============================================================
+//  SKILL: 结束时间回溯
+// ============================================================
+function endTimeRift() {
+    if (!timeRift.active) return
+
+    // 位置回溯到起点
+    player.x = timeRift.startX
+    player.y = timeRift.startY
+    player.x = clamp(player.x, player.r, W - player.r)
+    player.y = clamp(player.y, player.r, H - player.r)
+
+    timeRift.active = false
+    timeRift.cooldown = timeRift.maxCooldown
+    timeRift.flashAlpha = 0.5
+
+    // 回溯特效
+    for (let i = 0; i < 60; i++) {
+        const angle = rand(0, Math.PI * 2)
+        const speed = rand(1.5, 6)
+        particles.push({
+            x: player.x + rand(-10, 10),
+            y: player.y + rand(-10, 10),
+            r: rand(1.5, 4.5),
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: rand(15, 45),
+            maxLife: 45,
+            color: '#ffd700',
+            type: 'rift'
+        })
+    }
+
+    // 屏幕闪白
+    timeRift.flashAlpha = 0.5
+
+    positionHistory = []
+}
+
+// ============================================================
+//  SPAWN ENEMY
+// ============================================================
+function spawnEnemy() {
+    if (enemiesSpawned >= enemiesPerWave) return
+    let x, y
+    const side = randInt(0, 3)
+    if (side === 0) { x = rand(0, W);
+        y = -40 } else if (side === 1) { x = W + 40;
+        y = rand(0, H) } else if (side === 2) { x = rand(0, W);
+        y = H + 40 } else { x = -40;
+        y = rand(0, H) }
+
+    const radius = ENEMY_BASE_RADIUS + wave * 1.2
+    enemies.push({
+        x,
+        y,
+        r: radius,
+        hp: Math.ceil(wave / 2.5) + 1,
+        maxHp: Math.ceil(wave / 2.5) + 1,
+        speed: 1.2 + wave * 0.12,
+        vx: 0,
+        vy: 0,
+        hitFlash: 0
+    })
+    enemiesSpawned++
+}
+
+// ============================================================
+//  SHOOT
+// ============================================================
+function shoot() {
+    if (fireCooldown > 0) return
+    const dx = mouseX - player.x
+    const dy = mouseY - player.y
+    const d = dist(0, 0, dx, dy)
+    if (d < 5) return
+    bullets.push({
+        x: player.x,
+        y: player.y,
+        vx: dx / d * BULLET_SPEED,
+        vy: dy / d * BULLET_SPEED,
+        r: 4.5,
+        trail: []
+    })
+    fireCooldown = FIRE_RATE
+}
+
+// ============================================================
+//  PARTICLES - 添加爆炸
+// ============================================================
+function addExplosion(x, y, color, count, type) {
+    for (let i = 0; i < count; i++) {
+        const angle = rand(0, Math.PI * 2)
+        const speed = rand(1, 4.5)
+        particles.push({
+            x,
+            y,
+            r: rand(1.5, 5),
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: rand(18, 55),
+            maxLife: 55,
+            color,
+            type: type || 'normal'
+        })
+    }
+}
+
+// ============================================================
+//  UPDATE
+// ============================================================
+function update() {
+    const dt = 1 // 固定时间步长
+
+    if (gameOver || gameWon) {
+        // 仍然更新粒子
+        updateParticles()
+        return
+    }
+
+    // ---------- 玩家移动 ----------
+    let dx = 0,
+        dy = 0
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1
+    if (keys['ArrowUp'] || keys['w'] || keys['W']) dy = -1
+    if (keys['ArrowDown'] || keys['s'] || keys['S']) dy = 1
+    if (dx !== 0 && dy !== 0) { dx *= 0.707;
+        dy *= 0.707 }
+
+    const currentSpeed = player.speed * (timeRift.active ? timeRift.speedBoost : 1)
+    player.x += dx * currentSpeed
+    player.y += dy * currentSpeed
+    player.x = clamp(player.x, player.r, W - player.r)
+    player.y = clamp(player.y, player.r, H - player.r)
+
+    // 记录位置历史
+    if (timeRift.active) {
+        positionHistory.push({ x: player.x, y: player.y })
+        if (positionHistory.length > HISTORY_MAX) positionHistory.shift()
+    }
+
+    // ---------- 无敌 ----------
+    if (player.invincible > 0) player.invincible--
+
+    // ---------- 射击 ----------
+    if (mouseDown) shoot()
+    if (fireCooldown > 0) fireCooldown--
+
+    // ---------- 时间回溯计时 ----------
+    if (timeRift.active) {
+        timeRift.timer -= dt * (1000 / 60)
+        timeRift.flashAlpha *= 0.96
+        if (timeRift.timer <= 0) {
+            endTimeRift()
+        }
+    } else {
+        timeRift.flashAlpha *= 0.92
+    }
+    if (timeRift.cooldown > 0) timeRift.cooldown -= dt * (1000 / 60)
+
+    // ---------- 能量恢复 ----------
+    if (!timeRift.active) {
+        player.energy = Math.min(player.maxEnergy, player.energy + player.energyRegen * (1 / 60))
+    }
+
+    // ---------- 子弹更新 ----------
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i]
+        b.x += b.vx
+        b.y += b.vy
+
+        // 拖尾记录
+        b.trail.push({ x: b.x, y: b.y })
+        if (b.trail.length > 6) b.trail.shift()
+
+        // 边界移除
+        if (b.x < -30 || b.x > W + 30 || b.y < -30 || b.y > H + 30) {
+            bullets.splice(i, 1)
+            continue
+        }
+
+        // 碰撞检测 - 敌人
+        let hit = false
+        for (let j = enemies.length - 1; j >= 0; j--) {
+            const e = enemies[j]
+            if (dist(b.x, b.y, e.x, e.y) < b.r + e.r) {
+                bullets.splice(i, 1)
+                e.hp--
+                e.hitFlash = 6
+                if (e.hp <= 0) {
+                    // 击杀得分
+                    const multi = timeRift.active ? timeRift.scoreMultiplier : 1
+                    score += Math.floor(100 * wave * multi)
+
+                    // 爆炸特效
+                    const boomColor = timeRift.active ? '#4ee0ff' : '#e94560'
+                    addExplosion(e.x, e.y, boomColor, 22 + wave * 2, 'boom')
+
+                    // 技能期间击杀额外粒子
+                    if (timeRift.active) {
+                        for (let k = 0; k < 12; k++) {
+                            const a = rand(0, Math.PI * 2)
+                            const sp = rand(2, 6)
+                            particles.push({
+                                x: e.x,
+                                y: e.y,
+                                r: rand(2, 4),
+                                vx: Math.cos(a) * sp,
+                                vy: Math.sin(a) * sp,
+                                life: rand(20, 40),
+                                maxLife: 40,
+                                color: '#ffd700',
+                                type: 'score'
+                            })
+                        }
+                    }
+
+                    enemies.splice(j, 1)
+                }
+                hit = true
+                break
+            }
+        }
+        if (hit) continue
+    }
+
+    // ---------- 敌人波次管理 ----------
+    if (enemiesSpawned < enemiesPerWave && Math.random() < 0.025 + wave * 0.002) spawnEnemy()
+
+    if (enemiesSpawned >= enemiesPerWave && enemies.length === 0) {
+        wave++
+        enemiesSpawned = 0
+        enemiesPerWave = 5 + wave * 2 + Math.floor(wave / 3) * 2
+        if (wave > MAX_WAVE) { gameWon = true; return }
+        // 波次奖励
+        score += wave * 50
+        // 波次特效
+        for (let i = 0; i < 30; i++) {
+            const a = rand(0, Math.PI * 2)
+            const sp = rand(2, 8)
+            particles.push({
+                x: rand(100, W - 100),
+                y: rand(100, H - 100),
+                r: rand(2, 6),
+                vx: Math.cos(a) * sp,
+                vy: Math.sin(a) * sp,
+                life: rand(30, 60),
+                maxLife: 60,
+                color: '#4ecca3',
+                type: 'wave'
+            })
+        }
+    }
+
+    // ---------- 敌人移动 & 碰撞 ----------
+    const slowFactor = timeRift.active ? timeRift.slowFactor : 1.0
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i]
+        const ddx = player.x - e.x
+        const ddy = player.y - e.y
+        const d = dist(0, 0, ddx, ddy)
+        if (d > 0.1) {
+            const moveSpeed = e.speed * slowFactor
+            e.vx = ddx / d * moveSpeed
+            e.vy = ddy / d * moveSpeed
+        }
+        e.x += e.vx
+        e.y += e.vy
+
+        // 淡入边界 (防止卡在边缘)
+        e.x = clamp(e.x, -20, W + 20)
+        e.y = clamp(e.y, -20, H + 20)
+
+        // hit flash 衰减
+        if (e.hitFlash > 0) e.hitFlash--
+
+        // 玩家碰撞
+        if (player.invincible <= 0) {
+            if (dist(player.x, player.y, e.x, e.y) < player.r + e.r) {
+                player.hp--
+                player.invincible = 55
+                addExplosion(player.x, player.y, '#ff6b6b', 10, 'hurt')
+                if (player.hp <= 0) {
+                    gameOver = true
+                    addExplosion(player.x, player.y, '#ff4444', 50, 'death')
+                    return
+                }
+                // 击退敌人
+                const angle = Math.atan2(e.y - player.y, e.x - player.x)
+                e.x += Math.cos(angle) * 30
+                e.y += Math.sin(angle) * 30
+            }
+        }
+    }
+
+    // ---------- 粒子更新 ----------
+    updateParticles()
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i]
+        p.x += p.vx
+        p.y += p.vy
+        p.life--
+        p.vx *= 0.97
+        p.vy *= 0.97
+        if (p.life <= 0) particles.splice(i, 1)
+    }
+}
+
+// ============================================================
+//  DRAW
+// ============================================================
+function draw() {
+    // ---------- 背景 ----------
+    ctx.fillStyle = '#06060f'
+    ctx.fillRect(0, 0, W, H)
+
+    // ---------- 星云背景 ----------
+    const grad = ctx.createRadialGradient(W / 2, H / 2, 100, W / 2, H / 2, 400)
+    grad.addColorStop(0, 'rgba(20, 40, 80, 0.15)')
+    grad.addColorStop(0.5, 'rgba(10, 20, 50, 0.08)')
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, W, H)
+
+    // ---------- 星星 ----------
+    ctx.fillStyle = '#ffffff'
+    for (let i = 0; i < 110; i++) {
+        const sx = (i * 137.5 + 41.7) % W
+        const sy = (i * 97.3 + 19.3) % H
+        const sr = 0.4 + (i % 4) * 0.4
+        ctx.globalAlpha = 0.2 + (i % 5) * 0.12
+        ctx.beginPath()
+        ctx.arc(sx, sy, sr, 0, Math.PI * 2)
+        ctx.fill()
+    }
+    ctx.globalAlpha = 1
+
+    // ---------- 时间回溯视觉叠加层 ----------
+    if (timeRift.active || timeRift.flashAlpha > 0.01) {
+        // 蓝色时间滤镜
+        const alpha = timeRift.active ? 0.18 + Math.sin(Date.now() / 400) * 0.04 : timeRift.flashAlpha * 0.25
+        ctx.fillStyle = `rgba(30, 100, 255, ${alpha})`
+        ctx.fillRect(0, 0, W, H)
+
+        // 边缘光晕
+        const grad2 = ctx.createRadialGradient(W / 2, H / 2, 100, W / 2, H / 2, 500)
+        const edgeAlpha = timeRift.active ? 0.3 : timeRift.flashAlpha * 0.6
+        grad2.addColorStop(0, 'rgba(78, 224, 255, 0)')
+        grad2.addColorStop(0.7, 'rgba(78, 224, 255, 0)')
+        grad2.addColorStop(0.85, `rgba(78, 224, 255, ${edgeAlpha * 0.3})`)
+        grad2.addColorStop(1, `rgba(78, 224, 255, ${edgeAlpha * 0.7})`)
+        ctx.fillStyle = grad2
+        ctx.fillRect(0, 0, W, H)
+
+        // 时间粒子 (漂浮)
+        if (timeRift.active) {
+            for (let i = 0; i < 15; i++) {
+                const x = (i * 67 + Date.now() * 0.03) % W
+                const y = (i * 43 + Date.now() * 0.02 + 200) % H
+                const size = 1.5 + (i % 3) * 1.5
+                ctx.globalAlpha = 0.2 + (i % 4) * 0.1 + Math.sin(Date.now() / 600 + i) * 0.1
+                ctx.fillStyle = '#4ee0ff'
+                ctx.beginPath()
+                ctx.arc(x, y, size, 0, Math.PI * 2)
+                ctx.fill()
+                // 拖尾小点
+                ctx.globalAlpha = 0.1
+                ctx.beginPath()
+                ctx.arc(x - 8, y - 4, size * 0.6, 0, Math.PI * 2)
+                ctx.fill()
+                ctx.globalAlpha = 1
+            }
+        }
+    }
+
+    // ---------- 时间回溯闪烁 ----------
+    if (timeRift.flashAlpha > 0.01) {
+        ctx.fillStyle = `rgba(200, 240, 255, ${timeRift.flashAlpha * 0.25})`
+        ctx.fillRect(0, 0, W, H)
+    }
+
+    // ---------- 位置历史轨迹 ----------
+    if (timeRift.active && positionHistory.length > 5) {
+        for (let i = 0; i < positionHistory.length; i++) {
+            const alpha = (i / positionHistory.length) * 0.35
+            const size = 3 + (i / positionHistory.length) * 5
+            ctx.globalAlpha = alpha
+            ctx.fillStyle = '#4ee0ff'
+            ctx.beginPath()
+            ctx.arc(positionHistory[i].x, positionHistory[i].y, size, 0, Math.PI * 2)
+            ctx.fill()
+        }
+        ctx.globalAlpha = 1
+        // 起点标记
+        ctx.strokeStyle = 'rgba(78, 224, 255, 0.5)'
+        ctx.lineWidth = 2
+        ctx.setLineDash([5, 8])
+        ctx.beginPath()
+        ctx.arc(timeRift.startX, timeRift.startY, 28 + Math.sin(Date.now() / 300) * 4, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.setLineDash([])
+        // 起点十字
+        ctx.strokeStyle = 'rgba(78, 224, 255, 0.7)'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(timeRift.startX - 12, timeRift.startY)
+        ctx.lineTo(timeRift.startX + 12, timeRift.startY)
+        ctx.moveTo(timeRift.startX, timeRift.startY - 12)
+        ctx.lineTo(timeRift.startX, timeRift.startY + 12)
+        ctx.stroke()
+    }
+
+    // ---------- 子弹 ----------
+    for (const b of bullets) {
+        // 拖尾
+        for (let t = 0; t < b.trail.length; t++) {
+            const alpha = (t / b.trail.length) * 0.5
+            ctx.globalAlpha = alpha
+            ctx.fillStyle = '#ffd700'
+            ctx.beginPath()
+            ctx.arc(b.trail[t].x, b.trail[t].y, b.r * (t / b.trail.length) * 0.8, 0, Math.PI * 2)
+            ctx.fill()
+        }
+        ctx.globalAlpha = 1
+        // 子弹主体
+        const gradB = ctx.createRadialGradient(b.x - 1, b.y - 1, 1, b.x, b.y, b.r)
+        gradB.addColorStop(0, '#fffbe6')
+        gradB.addColorStop(0.4, '#ffd700')
+        gradB.addColorStop(1, '#ff8c00')
+        ctx.fillStyle = gradB
+        ctx.beginPath()
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2)
+        ctx.fill()
+        // 发光
+        ctx.globalAlpha = 0.2
+        ctx.fillStyle = '#ffd700'
+        ctx.beginPath()
+        ctx.arc(b.x, b.y, b.r * 2.2, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalAlpha = 1
+    }
+
+    // ---------- 敌人 ----------
+    for (const e of enemies) {
+        // 时间回溯中的敌人光晕
+        if (timeRift.active) {
+            ctx.globalAlpha = 0.2 + Math.sin(Date.now() / 300 + e.x) * 0.08
+            ctx.fillStyle = '#4ee0ff'
+            ctx.beginPath()
+            ctx.arc(e.x, e.y, e.r + 10 + Math.sin(Date.now() / 400 + e.y) * 3, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.globalAlpha = 1
+        }
+
+        // 敌人主体
+        const colorHit = e.hitFlash > 0
+        const baseColor = colorHit ? '#ffffff' : (timeRift.active ? '#4a6fa5' : '#e94560')
+        const innerColor = colorHit ? '#ffdddd' : (timeRift.active ? '#6ab0ff' : '#ff6b6b')
+
+        // 阴影
+        ctx.globalAlpha = 0.15
+        ctx.fillStyle = timeRift.active ? '#4ee0ff' : '#e94560'
+        ctx.beginPath()
+        ctx.arc(e.x + 3, e.y + 4, e.r, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalAlpha = 1
+
+        // 主体
+        ctx.fillStyle = baseColor
+        ctx.beginPath()
+        ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2)
+        ctx.fill()
+
+        // 内圈
+        ctx.fillStyle = innerColor
+        ctx.beginPath()
+        ctx.arc(e.x, e.y, e.r * 0.6, 0, Math.PI * 2)
+        ctx.fill()
+
+        // 眼睛
+        const eyeOff = e.r * 0.3
+        ctx.fillStyle = '#111'
+        ctx.beginPath()
+        ctx.arc(e.x - eyeOff, e.y - 3, e.r * 0.18, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(e.x + eyeOff, e.y - 3, e.r * 0.18, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#fff'
+        ctx.beginPath()
+        ctx.arc(e.x - eyeOff + 1.5, e.y - 4, e.r * 0.07, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(e.x + eyeOff + 1.5, e.y - 4, e.r * 0.07, 0, Math.PI * 2)
+        ctx.fill()
+
+        // HP 条
+        if (e.hp < e.maxHp) {
+            const barW = e.r * 1.6
+            const barH = 3.5
+            const barY = e.y - e.r - 8
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'
+            ctx.fillRect(e.x - barW / 2, barY, barW, barH)
+            ctx.fillStyle = e.hp / e.maxHp > 0.5 ? '#4ecca3' : e.hp / e.maxHp > 0.25 ? '#ffd700' : '#ff4444'
+            ctx.fillRect(e.x - barW / 2, barY, barW * (e.hp / e.maxHp), barH)
+        }
+
+        // 时间回溯中的速度线
+        if (timeRift.active) {
+            ctx.globalAlpha = 0.15
+            ctx.strokeStyle = '#4ee0ff'
+            ctx.lineWidth = 1.5
+            for (let k = 0; k < 3; k++) {
+                const a = (k / 3) * Math.PI * 2 + Date.now() / 800
+                const len = e.r * 0.8 + Math.sin(Date.now() / 500 + k) * 5
+                ctx.beginPath()
+                ctx.moveTo(e.x + Math.cos(a) * e.r * 0.7, e.y + Math.sin(a) * e.r * 0.7)
+                ctx.lineTo(e.x + Math.cos(a) * (e.r * 0.7 + len), e.y + Math.sin(a) * (e.r * 0.7 + len))
+                ctx.stroke()
+            }
+            ctx.globalAlpha = 1
+        }
+    }
+
+    // ---------- 粒子 ----------
+    for (const p of particles) {
+        const alpha = clamp(p.life / p.maxLife, 0, 1)
+        ctx.globalAlpha = alpha
+        if (p.type === 'time') {
+            ctx.fillStyle = p.color
+            ctx.shadowColor = '#4ee0ff'
+            ctx.shadowBlur = 12
+        } else if (p.type === 'score') {
+            ctx.fillStyle = p.color
+            ctx.shadowColor = '#ffd700'
+            ctx.shadowBlur = 15
+        } else if (p.type === 'rift') {
+            ctx.fillStyle = p.color
+            ctx.shadowColor = '#ffd700'
+            ctx.shadowBlur = 20
+        } else {
+            ctx.fillStyle = p.color
+            ctx.shadowBlur = 0
+        }
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.shadowBlur = 0
+    }
+    ctx.globalAlpha = 1
+
+    // ---------- 玩家 ----------
+    const pAlpha = player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0 ? 0.5 : 1
+    ctx.globalAlpha = pAlpha
+
+    // 玩家光晕
+    const glowColor = timeRift.active ? '#4ee0ff' : '#4ecca3'
+    ctx.globalAlpha = 0.15 + Math.sin(Date.now() / 600) * 0.05
+    ctx.fillStyle = glowColor
+    ctx.beginPath()
+    ctx.arc(player.x, player.y, player.r + 10 + Math.sin(Date.now() / 500) * 3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = pAlpha
+
+    // 玩家主体
+    const gradP = ctx.createRadialGradient(player.x - 3, player.y - 4, 3, player.x, player.y, player.r)
+    const pColor1 = timeRift.active ? '#6ac0ff' : '#5eddb0'
+    const pColor2 = timeRift.active ? '#2a6fa0' : '#2a9d7a'
+    gradP.addColorStop(0, pColor1)
+    gradP.addColorStop(0.7, pColor2)
+    gradP.addColorStop(1, '#1a4a3a')
+    ctx.fillStyle = gradP
+    ctx.beginPath()
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2)
+    ctx.fill()
+
+    // 玩家护甲线
+    ctx.strokeStyle = timeRift.active ? 'rgba(78, 224, 255, 0.5)' : 'rgba(78, 204, 163, 0.4)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(player.x, player.y, player.r + 3, 0, Math.PI * 2)
+    ctx.stroke()
+
+    // 玩家眼睛
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(player.x - 5, player.y - 3, 4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(player.x + 5, player.y - 3, 4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#0a1a2a'
+    ctx.beginPath()
+    ctx.arc(player.x - 5 + 2, player.y - 3, 2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(player.x + 5 + 2, player.y - 3, 2, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.globalAlpha = 1
+
+    // ---------- 瞄准线 ----------
+    if (timeRift.active) {
+        ctx.strokeStyle = 'rgba(78, 224, 255, 0.25)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([4, 8])
+    } else {
+        ctx.strokeStyle = 'rgba(78, 204, 163, 0.15)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([4, 10])
+    }
+    ctx.beginPath()
+    ctx.moveTo(player.x, player.y)
+    ctx.lineTo(mouseX, mouseY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // ---------- 准星 ----------
+    const crossSize = 12
+    ctx.strokeStyle = timeRift.active ? 'rgba(78, 224, 255, 0.8)' : 'rgba(200, 200, 200, 0.6)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(mouseX - crossSize, mouseY)
+    ctx.lineTo(mouseX - 4, mouseY)
+    ctx.moveTo(mouseX + 4, mouseY)
+    ctx.lineTo(mouseX + crossSize, mouseY)
+    ctx.moveTo(mouseX, mouseY - crossSize)
+    ctx.lineTo(mouseX, mouseY - 4)
+    ctx.moveTo(mouseX, mouseY + 4)
+    ctx.lineTo(mouseX, mouseY + crossSize)
+    ctx.stroke()
+    ctx.fillStyle = timeRift.active ? 'rgba(78, 224, 255, 0.3)' : 'rgba(200, 200, 200, 0.2)'
+    ctx.beginPath()
+    ctx.arc(mouseX, mouseY, 3, 0, Math.PI * 2)
+    ctx.fill()
+
+    // ---------- UI ----------
+    drawUI()
+
+    // ---------- Game Over / Win ----------
+    if (gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.75)'
+        ctx.fillRect(0, 0, W, H)
+        ctx.fillStyle = '#ff4444'
+        ctx.font = 'bold 44px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.shadowColor = '#ff0000'
+        ctx.shadowBlur = 30
+        ctx.fillText('游戏结束', W / 2, H / 2 - 12)
+        ctx.shadowBlur = 0
+        ctx.font = '20px sans-serif'
+        ctx.fillStyle = '#ddd'
+        ctx.fillText('分数: ' + score + '  按 R 重新开始', W / 2, H / 2 + 48)
+        ctx.textAlign = 'left'
+    }
+    if (gameWon) {
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'
+        ctx.fillRect(0, 0, W, H)
+        ctx.fillStyle = '#4ecca3'
+        ctx.font = 'bold 44px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.shadowColor = '#4ecca3'
+        ctx.shadowBlur = 40
+        ctx.fillText('胜利！', W / 2, H / 2 - 12)
+        ctx.shadowBlur = 0
+        ctx.font = '20px sans-serif'
+        ctx.fillStyle = '#ddd'
+        ctx.fillText('最终分数: ' + score + '  按 R 重新开始', W / 2, H / 2 + 48)
+        ctx.textAlign = 'left'
+    }
+}
+
+// ============================================================
+//  UI 绘制
+// ============================================================
+function drawUI() {
+    // ---- 左上: 生命 ----
+    const heartSize = 18
+    const heartGap = 4
+    const heartX = 14,
+        heartY = 16
+    for (let i = 0; i < player.maxHp; i++) {
+        const hx = heartX + i * (heartSize + heartGap)
+        const hy = heartY
+        if (i < player.hp) {
+            ctx.fillStyle = '#ff4757'
+            ctx.shadowColor = '#ff4757'
+            ctx.shadowBlur = 8
+        } else {
+            ctx.fillStyle = '#2d2d3d'
+            ctx.shadowBlur = 0
+        }
+        ctx.font = heartSize + 'px sans-serif'
+        ctx.textAlign = 'left'
+        ctx.fillText('♥', hx, hy + heartSize)
+        ctx.shadowBlur = 0
+    }
+
+    // ---- 分数 ----
+    ctx.fillStyle = '#fff'
+    ctx.font = '15px sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText('分数: ' + score, 14, 52)
+
+    // ---- 波次 ----
+    ctx.fillStyle = '#aaa'
+    ctx.font = '14px sans-serif'
+    ctx.fillText('波次: ' + wave + ' / ' + MAX_WAVE, 14, 74)
+
+    // ---- 敌人剩余 ----
+    const remain = enemiesPerWave - enemiesSpawned + enemies.length
+    ctx.fillStyle = remain > 0 ? '#e94560' : '#4ecca3'
+    ctx.font = '13px sans-serif'
+    ctx.fillText('敌人: ' + Math.max(0, remain), 14, 96)
+
+    // ---- 技能能量条 (底部中央) ----
+    const barW = 220,
+        barH = 16
+    const barX = (W - barW) / 2,
+        barY = H - 38
+
+    // 背景
+    ctx.fillStyle = 'rgba(10, 10, 30, 0.8)'
+    ctx.shadowColor = 'rgba(78, 224, 255, 0.15)'
+    ctx.shadowBlur = 16
+    ctx.beginPath()
+    ctx.roundRect(barX - 4, barY - 4, barW + 8, barH + 28, 12)
+    ctx.fill()
+    ctx.shadowBlur = 0
+
+    // 能量条背景
+    ctx.fillStyle = 'rgba(20, 30, 50, 0.7)'
+    ctx.beginPath()
+    ctx.roundRect(barX, barY, barW, barH, 8)
+    ctx.fill()
+
+    // 能量条填充
+    const energyFrac = player.energy / player.maxEnergy
+    const gradE = ctx.createLinearGradient(barX, barY, barX + barW, barY)
+    const eColor1 = timeRift.active ? '#4ee0ff' : '#4ecca3'
+    const eColor2 = timeRift.active ? '#1a6fa0' : '#2a9d7a'
+    gradE.addColorStop(0, eColor1)
+    gradE.addColorStop(1, eColor2)
+    ctx.fillStyle = gradE
+    ctx.beginPath()
+    ctx.roundRect(barX + 2, barY + 2, (barW - 4) * energyFrac, barH - 4, 6)
+    ctx.fill()
+
+    // 能量条闪烁（低能量）
+    if (player.energy < 20) {
+        ctx.globalAlpha = 0.2 + Math.sin(Date.now() / 300) * 0.15
+        ctx.fillStyle = '#ff4757'
+        ctx.beginPath()
+        ctx.roundRect(barX + 2, barY + 2, (barW - 4) * energyFrac, barH - 4, 6)
+        ctx.fill()
+        ctx.globalAlpha = 1
+    }
+
+    // 能量数字
+    ctx.fillStyle = '#c8e6ff'
+    ctx.font = 'bold 11px sans-serif'
+    ctx.textAlign = 'center'
+    const energyText = Math.floor(player.energy) + ' / ' + player.maxEnergy
+    ctx.fillText(energyText, W / 2, barY + barH - 3)
+
+    // 技能提示
+    const skillReady = player.energy >= timeRift.energyCost && timeRift.cooldown <= 0 && !timeRift.active && !gameOver && !
+        gameWon
+    const skillCooldown = timeRift.cooldown > 0
+    const skillActive = timeRift.active
+
+    let skillText = ''
+    let skillColor = '#888'
+    let skillGlow = false
+
+    if (skillActive) {
+        const remainMs = Math.max(0, timeRift.timer)
+        skillText = '⚡ 时空回溯中 ' + (remainMs / 1000).toFixed(1) + 's'
+        skillColor = '#4ee0ff'
+        skillGlow = true
+    } else if (skillCooldown) {
+        skillText = '⏳ 冷却 ' + (timeRift.cooldown / 1000).toFixed(1) + 's'
+        skillColor = '#667'
+    } else if (skillReady) {
+        skillText = '【Q】 时空回溯 (能量: ' + timeRift.energyCost + ')'
+        skillColor = '#4ee0ff'
+        skillGlow = true
+    } else {
+        skillText = '【Q】 时空回溯 (需要 ' + timeRift.energyCost + ' 能量)'
+        skillColor = '#667'
+    }
+
+    if (skillGlow) {
+        ctx.shadowColor = '#4ee0ff'
+        ctx.shadowBlur = 18
+    }
+    ctx.fillStyle = skillColor
+    ctx.font = (skillActive ? 'bold 14px' : '13px') + ' sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(skillText, W / 2, barY - 8)
+    ctx.shadowBlur = 0
+
+    // ---- 技能期间分数倍率提示 ----
+    if (timeRift.active) {
+        ctx.fillStyle = '#ffd700'
+        ctx.font = 'bold 16px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.shadowColor = '#ffd700'
+        ctx.shadowBlur = 20
+        const multiText = '×' + timeRift.scoreMultiplier + ' 分数'
+        ctx.fillText(multiText, W / 2, barY - 32)
+        ctx.shadowBlur = 0
+    }
+
+    // ---- 右下: 操作提示 ----
+    ctx.fillStyle = 'rgba(200, 200, 220, 0.25)'
+    ctx.font = '11px sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText('WASD移动 | 鼠标射击 | Q时间回溯', W - 14, H - 12)
+}
+
+// ============================================================
+//  Canvas roundRect polyfill (for older browsers)
+// ============================================================
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+        if (r > w / 2) r = w / 2
+        if (r > h / 2) r = h / 2
+        this.moveTo(x + r, y)
+        this.arcTo(x + w, y, x + w, y + h, r)
+        this.arcTo(x + w, y + h, x, y + h, r)
+        this.arcTo(x, y + h, x, y, r)
+        this.arcTo(x, y, x + w, y, r)
+        this.closePath()
+    }
+}
+
+// ============================================================
+//  RESTART
+// ============================================================
+function restart() {
+    player.x = W / 2
+    player.y = H / 2
+    player.hp = player.maxHp
+    player.invincible = 0
+    player.energy = player.maxEnergy
+
+    timeRift.active = false
+    timeRift.cooldown = 0
+    timeRift.timer = 0
+    timeRift.flashAlpha = 0
+    positionHistory = []
+
+    bullets = []
+    enemies = []
+    particles = []
+    score = 0
+    wave = 1
+    enemiesSpawned = 0
+    enemiesPerWave = 5
+    gameOver = false
+    gameWon = false
+}
+
+// ============================================================
+//  GAME LOOP
+// ============================================================
+function gameLoop() {
+    update()
+    draw()
+    requestAnimationFrame(gameLoop)
+}
+gameLoop()
+
+// ============================================================
+//  RESPONSIVE
+// ============================================================
+function resize() {
+    const scale = Math.min(window.innerWidth / W, window.innerHeight / H, 1.2)
+    canvas.style.width = (W * scale) + 'px'
+    canvas.style.height = (H * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+</script>
+</body>
+</html>

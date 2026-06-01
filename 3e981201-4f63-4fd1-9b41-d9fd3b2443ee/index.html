@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  核心玩法：玩家操控一艘由音符构成的飞船，在弦乐编织的银河中飞行。飞船自动沿五线谱轨道前进，玩家通过点击或触摸屏幕上的音符节点来切换轨道，避开暗色噪音障碍。得分条件：成功穿越一个音符节点得10分，连续完美切换（0失误）触发连击倍率，最高5倍。操作方式：触屏点击或鼠标左键点击节点切换轨道；键盘支持方向键上/下切换。视觉风格：极简几何风格，以黑、白、金为主色，背景流动的金色五线谱与闪烁的音符光点，飞船尾部拖出彩色声波尾迹。主题设定为‘在宇宙弦乐中即兴演奏’。结束条件：碰到噪音障碍或漏掉音符节点则游戏结束，显示最终得分与完美切换次数。
+-->
+<meta name="description" content="核心玩法：玩家操控一艘由音符构成的飞船，在弦乐编织的银河中飞行。飞船自动沿五线谱轨道前进，玩家通过点击或触摸屏幕上的音符节点来切换轨道，避开暗色噪音障碍。得分条件：成功穿越一个音符节点得10分，连续完美切换（0失误）触发连击倍率，最高5倍。操作方式：触屏点击或鼠标左键点击节点切换轨道；键盘支持方向键上/下切换。视觉风格：极简几何风格，以黑、白、金为主色，背景流动的金色五线谱与闪烁的音符光点，飞船尾部拖出彩色声波尾迹。主题设定为‘在宇宙弦乐中即兴演奏’。结束条件：碰到噪音障碍或漏掉音符节点则游戏结束，显示最终得分与完美切换次数。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>星弦即兴曲 — Cosmic String Improv</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050508;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Georgia', 'Songti SC', serif;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+canvas {
+  display: block;
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+(function() {
+  'use strict';
+
+  // ─── Canvas Setup ────────────────────────────────────────
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ─── Constants ────────────────────────────────────────────
+  const LANE_COUNT = 5;
+  const NOTE_RADIUS = 20;
+  const OBSTACLE_SIZE = 24;
+  const SHIP_X_RATIO = 0.25;
+  const SCORE_PER_NOTE = 10;
+  const MAX_MULTIPLIER = 5;
+  const BASE_SPEED = 2.2;
+
+  // ─── State ────────────────────────────────────────────────
+  let gameState = 'start';   // 'start' | 'playing' | 'gameover'
+  let showRulesInGame = false;
+  let score = 0;
+  let combo = 0;
+  let totalCollected = 0;   // total notes collected (shown as 完美切换次数)
+  let multiplier = 1;
+  let shipLane = 2;
+  let shipLaneY = 0;
+  let notes = [];
+  let obstacles = [];
+  let trailParticles = [];
+  let ambientParticles = [];
+  let sparkParticles = [];
+  let screenShake = 0;
+  let scrollSpeed = BASE_SPEED;
+  let spawnNoteTimer = 0;
+  let spawnNoteInterval = 90;
+  let spawnObstacleTimer = 0;
+  let spawnObstacleInterval = 280;
+  let frameCount = 0;
+  let difficultyTimer = 0;
+  let difficultyLevel = 0;
+  let highScore = parseInt(localStorage.getItem('cosmicStringHighScore')) || 0;
+  let comboFlash = 0;
+  let scorePopups = []; // { text, x, y, life }
+  let gameOverFrame = 0;
+
+  // ─── Lane Helpers ─────────────────────────────────────────
+  function getLaneY(lane) {
+    const top = canvas.height * 0.14;
+    const bottom = canvas.height * 0.86;
+    return top + (lane / (LANE_COUNT - 1)) * (bottom - top);
+  }
+
+  function getShipX() {
+    return canvas.width * SHIP_X_RATIO;
+  }
+
+  function getLaneFromY(y) {
+    let closest = 0;
+    let closestDist = Infinity;
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const dist = Math.abs(y - getLaneY(i));
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = i;
+      }
+    }
+    return closest;
+  }
+
+  // ─── Object Creation ──────────────────────────────────────
+  function createNote() {
+    let lane;
+    // Avoid lanes that already have notes near the ship
+    const forbidden = new Set();
+    for (const n of notes) {
+      if (n.x > getShipX() - 160 && n.x < canvas.width) {
+        forbidden.add(n.lane);
+      }
+    }
+    const available = [];
+    for (let i = 0; i < LANE_COUNT; i++) {
+      if (!forbidden.has(i)) available.push(i);
+    }
+    if (available.length > 0) {
+      lane = available[Math.floor(Math.random() * available.length)];
+    } else {
+      lane = Math.floor(Math.random() * LANE_COUNT);
+    }
+
+    return {
+      x: canvas.width + NOTE_RADIUS + 20,
+      y: getLaneY(lane),
+      lane: lane,
+      radius: NOTE_RADIUS,
+      crossed: false, // has it crossed the ship line yet
+      pulse: Math.random() * Math.PI * 2,
+    };
+  }
+
+  function createObstacle() {
+    let lane = Math.floor(Math.random() * LANE_COUNT);
+    // Avoid spawning on lanes with notes about to reach the ship
+    let attempts = 0;
+    while (attempts < 5) {
+      let blocked = false;
+      for (const n of notes) {
+        if (n.lane === lane && n.x > getShipX() - 150 && n.x < getShipX() + 50) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) break;
+      lane = (lane + 1) % LANE_COUNT;
+      attempts++;
+    }
+
+    return {
+      x: canvas.width + OBSTACLE_SIZE + 20,
+      y: getLaneY(lane),
+      lane: lane,
+      size: OBSTACLE_SIZE,
+      crossed: false,
+      rotation: Math.random() * Math.PI,
+      pulse: Math.random() * Math.PI * 2,
+    };
+  }
+
+  // ─── Particles ────────────────────────────────────────────
+  function addTrail(x, y) {
+    const hue = (frameCount * 2.5) % 360;
+    for (let i = 0; i < 3; i++) {
+      trailParticles.push({
+        x: x + (Math.random() - 0.5) * 8,
+        y: y + (Math.random() - 0.5) * 6,
+        vx: -Math.random() * 2.5 - 0.5,
+        vy: (Math.random() - 0.5) * 1.2,
+        life: 1,
+        decay: 0.015 + Math.random() * 0.015,
+        size: 2 + Math.random() * 4,
+        hue: hue + Math.random() * 50 - 25,
+        sat: 80 + Math.random() * 20,
+        light: 50 + Math.random() * 20,
+      });
+    }
+  }
+
+  function addSpark(x, y, count, color, speed) {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const spd = Math.random() * speed + speed * 0.3;
+      sparkParticles.push({
+        x, y,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
+        life: 1,
+        decay: 0.015 + Math.random() * 0.02,
+        size: 1.5 + Math.random() * 3,
+        color: color || `hsl(${Math.random() * 60 + 30}, 100%, 70%)`,
+      });
+    }
+  }
+
+  function initAmbientParticles() {
+    ambientParticles = [];
+    for (let i = 0; i < 60; i++) {
+      ambientParticles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: 0.5 + Math.random() * 1.5,
+        speedX: (Math.random() - 0.5) * 0.2,
+        speedY: (Math.random() - 0.5) * 0.1,
+        alpha: 0.2 + Math.random() * 0.5,
+        twinkleSpeed: 0.01 + Math.random() * 0.03,
+        twinkleOffset: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+  initAmbientParticles();
+
+  // ─── Drawing: Background ─────────────────────────────────
+  function drawBackground() {
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Subtle radial gradient vignette
+    const grad = ctx.createRadialGradient(
+      canvas.width * 0.5, canvas.height * 0.5, 0,
+      canvas.width * 0.5, canvas.height * 0.5, canvas.width * 0.7
+    );
+    grad.addColorStop(0, 'rgba(20, 15, 10, 1)');
+    grad.addColorStop(1, 'rgba(5, 5, 8, 1)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function drawAmbientParticles() {
+    for (const p of ambientParticles) {
+      const alpha = p.alpha * (0.5 + 0.5 * Math.sin(frameCount * p.twinkleSpeed + p.twinkleOffset));
+      ctx.fillStyle = `rgba(255, 215, 150, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawStaffLines() {
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const y = getLaneY(i);
+
+      // Outer glow
+      ctx.strokeStyle = 'rgba(212, 165, 69, 0.04)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.stroke();
+
+      // Fine line
+      ctx.strokeStyle = 'rgba(212, 165, 69, 0.15)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.stroke();
+
+      // Lane markers
+      ctx.fillStyle = 'rgba(212, 165, 69, 0.06)';
+      for (let x = 0; x < canvas.width; x += canvas.width * 0.2) {
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // ─── Drawing: Elements ────────────────────────────────────
+  function drawNote(note) {
+    const { x, y, radius } = note;
+    const pulse = Math.sin(note.pulse) * 0.15 + 0.85;
+    const r = radius * pulse;
+
+    const shipX = getShipX();
+    const distToShip = Math.abs(x - shipX);
+    const glowIntensity = Math.max(0, 1 - distToShip / (canvas.width * 0.3));
+    const alpha = 0.3 + glowIntensity * 0.4;
+
+    // Outer glow
+    const gRad = r * (2.5 + glowIntensity * 1.5);
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, gRad);
+    gradient.addColorStop(0, `rgba(212, 165, 69, ${alpha * 0.5})`);
+    gradient.addColorStop(0.5, `rgba(212, 165, 69, ${alpha * 0.15})`);
+    gradient.addColorStop(1, 'rgba(212, 165, 69, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, gRad, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ring
+    ctx.strokeStyle = `rgba(212, 165, 69, ${0.5 + glowIntensity * 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner radial fill
+    const innerGrad = ctx.createRadialGradient(
+      x - r * 0.25, y - r * 0.25, 0,
+      x, y, r * 0.9
+    );
+    innerGrad.addColorStop(0, `rgba(255, 235, 190, ${0.7 + glowIntensity * 0.3})`);
+    innerGrad.addColorStop(0.6, `rgba(212, 165, 69, ${0.5 + glowIntensity * 0.2})`);
+    innerGrad.addColorStop(1, `rgba(180, 130, 40, 0)`);
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.9, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Small inner note detail
+    const s = r * 0.3;
+    ctx.fillStyle = `rgba(212, 165, 69, ${0.6 + glowIntensity * 0.4})`;
+    ctx.beginPath();
+    ctx.ellipse(x - s * 0.3, y + s * 0.1, s * 0.6, s * 0.45, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(212, 165, 69, ${0.6 + glowIntensity * 0.4})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.15, y - s * 0.05);
+    ctx.lineTo(x + s * 0.15, y - s * 1.2);
+    ctx.stroke();
+  }
+
+  function drawObstacle(obs) {
+    const { x, y, size } = obs;
+    const pulse = Math.sin(obs.pulse) * 0.08 + 0.92;
+    const s = size * pulse;
+
+    // Threat glow
+    const gRad = s * 2.2;
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, gRad);
+    gradient.addColorStop(0, 'rgba(80, 30, 40, 0.3)');
+    gradient.addColorStop(0.5, 'rgba(60, 20, 30, 0.1)');
+    gradient.addColorStop(1, 'rgba(40, 10, 20, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, gRad, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(obs.rotation);
+
+    // Main jagged shape — a "noise" glyph
+    ctx.strokeStyle = 'rgba(100, 90, 110, 0.85)';
+    ctx.lineWidth = 2.5;
+
+    const half = s * 0.55;
+    // X shape
+    ctx.beginPath();
+    ctx.moveTo(-half, -half);
+    ctx.lineTo(half, half);
+    ctx.moveTo(half, -half);
+    ctx.lineTo(-half, half);
+    ctx.stroke();
+
+    // Cross lines
+    ctx.strokeStyle = 'rgba(90, 80, 100, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-half, 0);
+    ctx.lineTo(half, 0);
+    ctx.moveTo(0, -half);
+    ctx.lineTo(0, half);
+    ctx.stroke();
+
+    // Static dots
+    ctx.fillStyle = 'rgba(130, 120, 140, 0.5)';
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2 + obs.rotation;
+      const dist = s * 0.4;
+      ctx.beginPath();
+      ctx.arc(Math.cos(angle) * dist, Math.sin(angle) * dist, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawShip(x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    // Core glow
+    const glowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 36);
+    glowGrad.addColorStop(0, 'rgba(212, 165, 69, 0.5)');
+    glowGrad.addColorStop(0.4, 'rgba(212, 165, 69, 0.15)');
+    glowGrad.addColorStop(1, 'rgba(212, 165, 69, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, 36, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ship as an ornate eighth note
+    const s = 16;
+
+    // Note head (filled ellipse, rotated slightly)
+    ctx.save();
+    ctx.translate(-s * 0.25, 0);
+    ctx.rotate(-0.25);
+    ctx.shadowColor = 'rgba(212, 165, 69, 0.6)';
+    ctx.shadowBlur = 10;
+
+    ctx.fillStyle = '#d4a545';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 0.55, s * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(-s * 0.15, -s * 0.1, s * 0.2, s * 0.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Stem
+    ctx.strokeStyle = '#d4a545';
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = 'rgba(212, 165, 69, 0.4)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.15, -s * 0.05);
+    ctx.lineTo(s * 0.15, -s * 1.7);
+    ctx.stroke();
+
+    // Flag (curved)
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#d4a545';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.15, -s * 1.7);
+    ctx.quadraticCurveTo(s * 0.7, -s * 1.35, s * 0.55, -s * 0.7);
+    ctx.quadraticCurveTo(s * 0.4, -s * 0.4, s * 0.25, -s * 0.5);
+    ctx.quadraticCurveTo(s * 0.45, -s * 0.8, s * 0.3, -s * 1.3);
+    ctx.quadraticCurveTo(s * 0.25, -s * 1.5, s * 0.15, -s * 1.5);
+    ctx.fill();
+
+    // Second flag
+    ctx.fillStyle = '#c49535';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.15, -s * 1.4);
+    ctx.quadraticCurveTo(s * 0.5, -s * 1.1, s * 0.4, -s * 0.6);
+    ctx.quadraticCurveTo(s * 0.3, -s * 0.35, s * 0.2, -s * 0.4);
+    ctx.quadraticCurveTo(s * 0.3, -s * 0.65, s * 0.25, -s * 1.0);
+    ctx.quadraticCurveTo(s * 0.2, -s * 1.2, s * 0.15, -s * 1.2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawTrail() {
+    for (const p of trailParticles) {
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = `hsl(${p.hue}, ${p.sat}%, ${p.light}%)`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawSparks() {
+    for (const p of sparkParticles) {
+      ctx.globalAlpha = p.life * 0.8;
+      ctx.fillStyle = p.color || '#ffd700';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ─── Drawing: UI ─────────────────────────────────────────
+  function drawUI() {
+    ctx.textBaseline = 'top';
+
+    // Score
+    ctx.shadowColor = 'rgba(212, 165, 69, 0.3)';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px Georgia, serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`♩ ${score}`, 20, 18);
+
+    // Multiplier badge
+    ctx.shadowBlur = 0;
+    const multW = 55;
+    const multX = 150;
+    const multY = 22;
+    ctx.fillStyle = combo > 0 ? 'rgba(212, 165, 69, 0.2)' : 'rgba(255,255,255,0.05)';
+    ctx.beginPath();
+    ctx.roundRect(multX, multY, multW, 28, 14);
+    ctx.fill();
+    ctx.strokeStyle = combo > 0 ? 'rgba(212, 165, 69, 0.4)' : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(multX, multY, multW, 28, 14);
+    ctx.stroke();
+    ctx.fillStyle = combo > 0 ? '#d4a545' : 'rgba(255,255,255,0.3)';
+    ctx.font = 'bold 16px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`×${multiplier}`, multX + multW / 2, multY + 14);
+
+    // Combo count
+    if (combo > 0) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = `rgba(255, 215, 150, ${0.5 + 0.3 * Math.sin(comboFlash)})`;
+      ctx.font = '14px Georgia, serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`连击 ${combo}`, multX + multW + 12, 26);
+    }
+
+    // Perfect switches (total collected)
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '13px Georgia, serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`完美切换 ${totalCollected}`, canvas.width - 20, 22);
+
+    // High score
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '11px Georgia, serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    if (highScore > 0) {
+      ctx.fillText(`最高 ${highScore}`, canvas.width - 20, 42);
+    }
+
+    ctx.shadowBlur = 0;
+  }
+
+  function drawScorePopups() {
+    for (const sp of scorePopups) {
+      ctx.globalAlpha = sp.life;
+      ctx.fillStyle = '#d4a545';
+      ctx.font = 'bold 22px Georgia, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(sp.text, sp.x, sp.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ─── Drawing: Start Screen with Rules ────────────────────
+  function drawStartScreen() {
+    // Dark background
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Starfield
+    drawAmbientParticles();
+    drawStaffLines();
+
+    // Title
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const titleY = canvas.height * 0.12;
+    ctx.shadowColor = 'rgba(212, 165, 69, 0.6)';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#d4a545';
+    ctx.font = 'bold 44px Georgia, "Songti SC", serif';
+    ctx.fillText('♩ 星弦即兴曲', canvas.width / 2, titleY);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255, 215, 150, 0.5)';
+    ctx.font = '16px Georgia, "Songti SC", serif';
+    ctx.fillText('Cosmic String Improv', canvas.width / 2, titleY + 40);
+
+    // ── Rules Panel ──
+    const panelW = Math.min(480, canvas.width * 0.85);
+    const panelH = 420;
+    const panelX = (canvas.width - panelW) / 2;
+    const panelY = canvas.height * 0.22;
+
+    // Panel background
+    ctx.fillStyle = 'rgba(10, 8, 12, 0.85)';
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, panelW, panelH, 12);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(212, 165, 69, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(panelX, panelY, panelW, panelH, 12);
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+
+    const leftX = panelX + 28;
+    let ry = panelY + 20;
+    const lineH = 26;
+    const smallGap = 8;
+
+    // Section: 游戏目标
+    ctx.fillStyle = '#d4a545';
+    ctx.font = 'bold 18px Georgia, "Songti SC", serif';
+    ctx.fillText('🎯 游戏目标', leftX, ry);
+    ry += 30;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.font = '15px Georgia, "Songti SC", serif';
+    ctx.fillText('操控音符飞船在五线谱轨道上飞行，', leftX, ry);
+    ry += lineH;
+    ctx.fillText('收集金色音符节点，避开暗色噪音障碍。', leftX, ry);
+    ry += lineH + smallGap;
+
+    // Section: 操作方式
+    ctx.fillStyle = '#d4a545';
+    ctx.font = 'bold 18px Georgia, "Songti SC", serif';
+    ctx.fillText('🎮 操作方式', leftX, ry);
+    ry += 30;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.font = '15px Georgia, "Songti SC", serif';
+    ctx.fillText('• 鼠标/触屏：点击或触摸音符节点切换轨道', leftX, ry);
+    ry += lineH;
+    ctx.fillText('• 键盘：方向键 ↑ / ↓ 上下切换轨道', leftX, ry);
+    ry += lineH + smallGap;
+
+    // Section: 得分规则
+    ctx.fillStyle = '#d4a545';
+    ctx.font = 'bold 18px Georgia, "Songti SC", serif';
+    ctx.fillText('⭐ 得分规则', leftX, ry);
+    ry += 30;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.font = '15px Georgia, "Songti SC", serif';
+    ctx.fillText('• 成功穿越音符节点：+10 分', leftX, ry);
+    ry += lineH;
+    ctx.fillText('• 连续完美切换触发连击倍率（最高 ×5）', leftX, ry);
+    ry += lineH;
+    ctx.fillText('• 碰到噪音障碍或漏掉节点 → 游戏结束', leftX, ry);
+    ry += lineH + smallGap;
+
+    // Section: 难度
+    ctx.fillStyle = '#d4a545';
+    ctx.font = 'bold 18px Georgia, "Songti SC", serif';
+    ctx.fillText('📈 难度递增', leftX, ry);
+    ry += 30;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.font = '15px Georgia, "Songti SC", serif';
+    ctx.fillText('随游戏时间推进，速度逐渐加快，', leftX, ry);
+    ry += lineH;
+    ctx.fillText('音符与障碍物出现更频繁。', leftX, ry);
+
+    // Start prompt
+    const startY = panelY + panelH + 36;
+    const pulseAlpha = 0.5 + 0.4 * Math.sin(frameCount * 0.05);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = `rgba(212, 165, 69, ${pulseAlpha})`;
+    ctx.font = 'bold 20px Georgia, "Songti SC", serif';
+    ctx.fillText('点击或按空格键开始演奏', canvas.width / 2, startY);
+
+    ctx.shadowBlur = 0;
+  }
+
+  function drawGameOver() {
+    // Dim overlay
+    const alpha = Math.min(1, (frameCount - gameOverFrame) / 30);
+    ctx.fillStyle = `rgba(5, 5, 8, ${alpha * 0.7})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Title
+    const titleY = canvas.height * 0.32;
+    ctx.shadowColor = 'rgba(212, 165, 69, 0.5)';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#d4a545';
+    ctx.font = 'bold 42px Georgia, serif';
+    ctx.fillText('游戏结束', canvas.width / 2, titleY);
+
+    ctx.shadowBlur = 0;
+
+    // Score
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 32px Georgia, serif';
+    ctx.fillText(`得分: ${score}`, canvas.width / 2, titleY + 70);
+
+    // Perfect switches
+    ctx.fillStyle = 'rgba(255, 215, 150, 0.7)';
+    ctx.font = '18px Georgia, serif';
+    ctx.fillText(`完美切换: ${totalCollected} 次`, canvas.width / 2, titleY + 110);
+
+    // Combo stat
+    if (combo > 0) {
+      ctx.fillStyle = 'rgba(255, 215, 150, 0.5)';
+      ctx.font = '15px Georgia, serif';
+      ctx.fillText(`最高连击: ${combo} (×${multiplier})`, canvas.width / 2, titleY + 140);
+    }
+
+    // High score
+    if (score >= highScore && score > 0) {
+      ctx.fillStyle = '#d4a545';
+      ctx.font = 'bold 20px Georgia, serif';
+      ctx.fillText('★ 新纪录! ★', canvas.width / 2, titleY + 175);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = '15px Georgia, serif';
+      ctx.fillText(`最高分: ${highScore}`, canvas.width / 2, titleY + 175);
+    }
+
+    // Restart hint
+    const restartAlpha = 0.4 + 0.3 * Math.sin(frameCount * 0.04);
+    ctx.fillStyle = `rgba(255, 215, 150, ${restartAlpha})`;
+    ctx.font = '16px Georgia, serif';
+    ctx.fillText('点击或按空格键重新开始', canvas.width / 2, canvas.height * 0.78);
+  }
+
+  // ─── Input Handling ──────────────────────────────────────
+  function handlePointer(clientX, clientY) {
+    if (gameState === 'gameover') {
+      restartGame();
+      return;
+    }
+    if (gameState === 'start') {
+      startPlaying();
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+
+    // Check if tapped directly on a note (only notes ahead of or near the ship)
+    for (const note of notes) {
+      if (note.x > getShipX() - 60) {
+        const dx = x - note.x;
+        const dy = y - note.y;
+        if (dx * dx + dy * dy < (note.radius + 20) * (note.radius + 20)) {
+          moveShipToLane(note.lane);
+          return;
+        }
+      }
+    }
+
+    // Fallback: determine which lane was tapped
+    const lane = getLaneFromY(y);
+    moveShipToLane(lane);
+  }
+
+  function moveShipToLane(lane) {
+    if (lane < 0 || lane >= LANE_COUNT) return;
+    if (shipLane !== lane) {
+      shipLane = lane;
+    }
+  }
+
+  // Event listeners
+  canvas.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    handlePointer(e.clientX, e.clientY);
+  });
+
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    if (touch) handlePointer(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  document.addEventListener('keydown', (e) => {
+    if (gameState === 'gameover') {
+      if (e.key === ' ' || e.key === 'Space') {
+        e.preventDefault();
+        restartGame();
+      }
+      return;
+    }
+    if (gameState === 'start') {
+      if (e.key === ' ' || e.key === 'Space') {
+        e.preventDefault();
+        startPlaying();
+      }
+      return;
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowUp' ? -1 : 1;
+      const newLane = Math.max(0, Math.min(LANE_COUNT - 1, shipLane + dir));
+      if (newLane !== shipLane) {
+        shipLane = newLane;
+      }
+    }
+  });
+
+  // ─── Game Logic ───────────────────────────────────────────
+  function updateGame() {
+    frameCount++;
+    if (gameState !== 'playing') return;
+    difficultyTimer++;
+
+    // Difficulty progression (every ~10 seconds at 60fps)
+    if (difficultyTimer % 600 === 0) {
+      difficultyLevel++;
+      scrollSpeed = Math.min(BASE_SPEED + difficultyLevel * 0.15, 6);
+      spawnNoteInterval = Math.max(50, spawnNoteInterval - 4);
+      spawnObstacleInterval = Math.max(130, spawnObstacleInterval - 10);
+    }
+
+    // Update ambient particles
+    for (const p of ambientParticles) {
+      p.x += p.speedX;
+      p.y += p.speedY;
+      if (p.x < -10) p.x = canvas.width + 10;
+      if (p.x > canvas.width + 10) p.x = -10;
+      if (p.y < -10) p.y = canvas.height + 10;
+      if (p.y > canvas.height + 10) p.y = -10;
+    }
+
+    // Spawn notes
+    spawnNoteTimer++;
+    if (spawnNoteTimer >= spawnNoteInterval) {
+      spawnNoteTimer = 0;
+      notes.push(createNote());
+    }
+
+    // Spawn obstacles
+    spawnObstacleTimer++;
+    if (spawnObstacleTimer >= spawnObstacleInterval) {
+      spawnObstacleTimer = 0;
+      const obs = createObstacle();
+      obstacles.push(obs);
+    }
+
+    const shipX = getShipX();
+
+    // Move and check notes
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const note = notes[i];
+      const prevX = note.x;
+      note.x -= scrollSpeed;
+      note.pulse += 0.04;
+      note.y = getLaneY(note.lane);
+
+      // Check if note crosses the ship's x position
+      if (!note.crossed && prevX >= shipX && note.x < shipX) {
+        note.crossed = true;
+        if (note.lane === shipLane) {
+          // Collected!
+          collectNote(note);
+          notes.splice(i, 1);
+        } else {
+          // Missed! Note passed on a different lane
+          gameOver('miss');
+          return;
+        }
+      }
+
+      // Remove if far off-screen
+      if (note.x < -NOTE_RADIUS * 4) {
+        notes.splice(i, 1);
+      }
+    }
+
+    // Move and check obstacles
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const obs = obstacles[i];
+      const prevX = obs.x;
+      obs.x -= scrollSpeed;
+      obs.rotation += 0.02;
+      obs.pulse += 0.03;
+      obs.y = getLaneY(obs.lane);
+
+      // Check if obstacle crosses the ship's x position
+      if (!obs.crossed && prevX >= shipX && obs.x < shipX) {
+        obs.crossed = true;
+        if (obs.lane === shipLane) {
+          // Hit!
+          gameOver('obstacle');
+          return;
+        }
+      }
+
+      if (obs.x < -OBSTACLE_SIZE * 4) {
+        obstacles.splice(i, 1);
+      }
+    }
+
+    // Ship position
+    shipLaneY = getLaneY(shipLane);
+
+    // Add trail particles
+    if (frameCount % 2 === 0) {
+      addTrail(shipX - 20, shipLaneY);
+    }
+
+    // Update trail particles
+    for (let i = trailParticles.length - 1; i >= 0; i--) {
+      const p = trailParticles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life -= p.decay;
+      if (p.life <= 0) {
+        trailParticles.splice(i, 1);
+      }
+    }
+
+    // Update spark particles
+    for (let i = sparkParticles.length - 1; i >= 0; i--) {
+      const p = sparkParticles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.02;
+      p.life -= p.decay;
+      if (p.life <= 0) {
+        sparkParticles.splice(i, 1);
+      }
+    }
+
+    // Update score popups
+    for (let i = scorePopups.length - 1; i >= 0; i--) {
+      const sp = scorePopups[i];
+      sp.y -= 0.8;
+      sp.life -= 0.02;
+      if (sp.life <= 0) {
+        scorePopups.splice(i, 1);
+      }
+    }
+
+    // Screen shake decay
+    if (screenShake > 0) screenShake *= 0.92;
+    if (screenShake < 0.1) screenShake = 0;
+
+    // Combo flash
+    comboFlash += 0.05;
+  }
+
+  function collectNote(note) {
+    combo++;
+    totalCollected++;
+    multiplier = Math.min(1 + Math.floor(combo / 3), MAX_MULTIPLIER);
+
+    const points = SCORE_PER_NOTE * multiplier;
+    score += points;
+
+    // Collect effect
+    addSpark(note.x, note.y, 12, '#d4a545', 3);
+
+    // Score popup
+    const multText = multiplier > 1 ? ` ×${multiplier}` : '';
+    scorePopups.push({
+      text: `+${points}${multText}`,
+      x: note.x,
+      y: note.y - 30,
+      life: 1,
+    });
+
+    // Lane flash effect - brief particle burst on the ship
+    addSpark(getShipX(), getLaneY(note.lane), 5, 'rgba(255, 240, 200, 0.6)', 2);
+  }
+
+  function gameOver(reason) {
+    gameState = 'gameover';
+    gameOverFrame = frameCount;
+    screenShake = 15;
+
+    // Save high score
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('cosmicStringHighScore', highScore);
+    }
+
+    // Explosion particles
+    const shipX = getShipX();
+    addSpark(shipX, shipLaneY, 30, '#d4a545', 5);
+    addSpark(shipX, shipLaneY, 20, '#ff6644', 3);
+    addSpark(shipX, shipLaneY, 20, '#ffffff', 4);
+  }
+
+  function restartGame() {
+    gameState = 'playing';
+    score = 0;
+    combo = 0;
+    totalCollected = 0;
+    multiplier = 1;
+    shipLane = 2;
+    notes = [];
+    obstacles = [];
+    trailParticles = [];
+    sparkParticles = [];
+    scorePopups = [];
+    screenShake = 0;
+    scrollSpeed = BASE_SPEED;
+    spawnNoteTimer = 0;
+    spawnNoteInterval = 90;
+    spawnObstacleTimer = 0;
+    spawnObstacleInterval = 280;
+    frameCount = 0;
+    difficultyTimer = 0;
+    difficultyLevel = 0;
+
+    shipLaneY = getLaneY(shipLane);
+  }
+
+  function startPlaying() {
+    gameState = 'playing';
+  }
+
+  // ─── Main Render Loop ────────────────────────────────────
+  function render() {
+    // Apply screen shake
+    ctx.save();
+    if (screenShake > 0.5) {
+      const shakeX = (Math.random() - 0.5) * screenShake * 0.5;
+      const shakeY = (Math.random() - 0.5) * screenShake * 0.5;
+      ctx.translate(shakeX, shakeY);
+    }
+
+    // Layers: background → ambient → staff → trail → obstacles → notes → ship → sparks
+    drawBackground();
+    drawAmbientParticles();
+    drawStaffLines();
+    drawTrail();
+
+    for (const obs of obstacles) drawObstacle(obs);
+    for (const note of notes) drawNote(note);
+
+    drawShip(getShipX(), shipLaneY);
+    drawSparks();
+    drawScorePopups();
+
+    ctx.restore();
+
+    // UI (not affected by shake)
+    if (gameState === 'playing') {
+      drawUI();
+    }
+
+    if (gameState === 'gameover') {
+      drawGameOver();
+    }
+
+    if (gameState === 'start') {
+      drawStartScreen();
+    }
+  }
+
+  // ─── Game Loop ────────────────────────────────────────────
+  function gameLoop() {
+    updateGame();
+    render();
+    requestAnimationFrame(gameLoop);
+  }
+
+  // ─── Polyfill roundRect ───────────────────────────────────
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+      if (r > w / 2) r = w / 2;
+      if (r > h / 2) r = h / 2;
+      this.moveTo(x + r, y);
+      this.arcTo(x + w, y, x + w, y + h, r);
+      this.arcTo(x + w, y + h, x, y + h, r);
+      this.arcTo(x, y + h, x, y, r);
+      this.arcTo(x, y, x + w, y, r);
+      return this;
+    };
+  }
+
+  // ─── Start ────────────────────────────────────────────────
+  shipLaneY = getLaneY(shipLane);
+  gameLoop();
+
+})();
+</script>
+</body>
+</html>

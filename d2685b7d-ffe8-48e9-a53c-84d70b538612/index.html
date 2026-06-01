@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  玩家操控一个墨水瓶角色，通过鼠标点击地面实现弹跳移动，攻击方式为发射墨水炸弹，击中敌人会留下墨渍，墨渍越大连击得分越高。视觉风格为泼墨抽象画风，黑白为主带彩色溅射。胜利条件为在限定时间内累积达到目标分数，失败则生命值归零或时间耗尽。
+-->
+<meta name="description" content="玩家操控一个墨水瓶角色，通过鼠标点击地面实现弹跳移动，攻击方式为发射墨水炸弹，击中敌人会留下墨渍，墨渍越大连击得分越高。视觉风格为泼墨抽象画风，黑白为主带彩色溅射。胜利条件为在限定时间内累积达到目标分数，失败则生命值归零或时间耗尽。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>墨战 - Ink Battle</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #2a2a2a;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'SimSun', 'STSong', 'Noto Serif SC', serif;
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+const W = 960, H = 640
+canvas.width = W
+canvas.height = H
+
+// ============== GAME CONFIG ==============
+const TARGET_SCORE = 5000
+const TIME_LIMIT = 90
+const MAX_HP = 5
+const INK_BOMB_SPEED = 7
+const FIRE_INTERVAL = 35
+const AUTO_FIRE_RANGE = 400
+const COMBO_WINDOW = 45
+
+// ============== UTILITY ==============
+function dist(x1, y1, x2, y2) {
+  return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+}
+function rand(min, max) { return min + Math.random() * (max - min) }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)) }
+function lerp(a, b, t) { return a + (b - a) * t }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)) }
+
+// ============== COLOR PALETTE ==============
+const INK_BLACK = '#1a1a1a'
+const INK_DARK = '#2a2a2a'
+const PAPER = '#f5f0e8'
+const PAPER_DARK = '#e8e0d0'
+const SPLASH_COLORS = ['#c0392b','#e67e22','#f1c40f','#2ecc71','#2980b9','#8e44ad','#e74c3c']
+
+// ============== GROUND INK SPLATS ==============
+let inkSplats = []
+
+function addInkSplat(x, y, size, color, isComboSplat) {
+  inkSplats.push({
+    x, y,
+    maxRadius: size,
+    radius: 2,
+    color: color || INK_BLACK,
+    alpha: 0.85,
+    life: 360,
+    maxLife: 360,
+    points: 6 + randInt(0, 8),
+    variance: 0.25 + Math.random() * 0.35,
+    rotation: Math.random() * Math.PI * 2,
+    isComboSplat: !!isComboSplat
+  })
+}
+
+// ============== COMBO SYSTEM ==============
+let combo = 0
+let comboTimer = 0
+let maxCombo = 0
+
+function addCombo() {
+  combo++
+  if (combo > maxCombo) maxCombo = combo
+  comboTimer = COMBO_WINDOW
+}
+
+function resetCombo() {
+  combo = 0
+  comboTimer = 0
+}
+
+// ============== PLAYER (Ink Bottle) ==============
+const player = {
+  x: W / 2, y: H / 2,
+  targetX: W / 2, targetY: H / 2,
+  bounceVX: 0, bounceVY: 0,
+  isBouncing: false,
+  bounceArc: 0, // visual bounce height
+  hp: MAX_HP, maxHp: MAX_HP,
+  invincible: 0,
+  fireCooldown: 0,
+  tiltAngle: 0
+}
+
+// Bottle shape constants
+const BW = 26, BH = 34
+const NW = 10, NH = 10
+
+// ============== INK BOMBS ==============
+let inkBombs = []
+
+function fireInkBomb(tx, ty) {
+  if (player.fireCooldown > 0) return
+  const dx = tx - player.x
+  const dy = ty - player.y
+  const d = dist(0, 0, dx, dy)
+  if (d < 5) return
+  const vx = dx / d * INK_BOMB_SPEED + rand(-0.3, 0.3)
+  const vy = dy / d * INK_BOMB_SPEED + rand(-0.3, 0.3)
+  inkBombs.push({
+    x: player.x, y: player.y - 6,
+    vx, vy, r: 5,
+    trail: [],
+    life: 70
+  })
+  player.fireCooldown = FIRE_INTERVAL
+  // Muzzle ink puff
+  for (let i = 0; i < 4; i++) {
+    particles.push({
+      x: player.x, y: player.y - 6,
+      vx: rand(-1, 1), vy: rand(-2, 0.5),
+      r: rand(1, 3), color: INK_DARK,
+      life: rand(8, 16), maxLife: 16,
+      gravity: 0.02, drag: 0.96
+    })
+  }
+}
+
+// ============== ENEMIES (Ink Blobs) ==============
+let enemies = []
+let wave = 1
+let enemiesPerWave = 4
+let enemiesSpawned = 0
+let spawnCounter = 0
+let totalKilled = 0
+
+function spawnEnemy() {
+  if (enemiesSpawned >= enemiesPerWave) return
+  let x, y
+  const side = randInt(0, 3)
+  if (side === 0) { x = rand(-40, -10); y = rand(40, H - 40) }
+  else if (side === 1) { x = rand(W + 10, W + 40); y = rand(40, H - 40) }
+  else if (side === 2) { x = rand(40, W - 40); y = rand(-40, -10) }
+  else { x = rand(40, W - 40); y = rand(H + 10, H + 40) }
+
+  const r = 16 + wave * 1.2 + rand(0, 6)
+  enemies.push({
+    x, y, r,
+    hp: Math.ceil(1 + wave * 0.3),
+    maxHp: Math.ceil(1 + wave * 0.3),
+    speed: 0.7 + wave * 0.07 + rand(0, 0.2),
+    wobble: rand(0, Math.PI * 2),
+    wobbleSpeed: 0.015 + rand(0, 0.015),
+    points: 6 + randInt(0, 6),
+    variance: 0.2 + rand(0, 0.25),
+    rotation: rand(0, Math.PI * 2),
+    flash: 0
+  })
+  enemiesSpawned++
+}
+
+// ============== PARTICLES ==============
+let particles = []
+
+function emitParticles(x, y, count, color, speed, size, opts) {
+  opts = opts || {}
+  for (let i = 0; i < count; i++) {
+    const angle = rand(0, Math.PI * 2)
+    const spd = rand(0.5, speed)
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      r: rand(size * 0.3, size),
+      color: color,
+      life: rand(opts.minLife || 15, opts.maxLife || 45),
+      maxLife: opts.maxLife || 45,
+      gravity: opts.gravity || 0.03,
+      drag: opts.drag || 0.97
+    })
+  }
+}
+
+function emitInkSplash(x, y, color, intensity) {
+  const count = Math.floor(8 + intensity * 6)
+  emitParticles(x, y, count, color, 3 + intensity * 2, 3 + intensity, { gravity: 0.02 })
+  emitParticles(x, y, Math.floor(count * 0.6), INK_DARK, 2 + intensity, 2 + intensity, { gravity: 0.04 })
+}
+
+// ============== GAME STATE ==============
+let score = 0
+let timeLeft = TIME_LIMIT
+let gameOver = false
+let gameWon = false
+let frameCount = 0
+let gameStarted = false
+
+// ============== INPUT ==============
+let mouseX = W / 2, mouseY = H / 2
+
+function getCanvasPos(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect()
+  const sx = canvas.width / rect.width
+  const sy = canvas.height / rect.height
+  return { x: (clientX - rect.left) * sx, y: (clientY - rect.top) * sy }
+}
+
+function handleClick(clientX, clientY) {
+  if (gameOver || gameWon) return
+  gameStarted = true
+
+  const pos = getCanvasPos(clientX, clientY)
+
+  // Don't move if clicking on UI area (top 50px)
+  if (pos.y < 50) return
+
+  player.targetX = clamp(pos.x, 20, W - 20)
+  player.targetY = clamp(pos.y, 20, H - 20)
+
+  const dx = player.targetX - player.x
+  const dy = player.targetY - player.y
+  const d = dist(0, 0, dx, dy)
+  if (d < 8) return
+
+  const launchSpeed = clamp(d * 0.08, 3, 9)
+  player.bounceVX = dx / d * launchSpeed
+  player.bounceVY = dy / d * launchSpeed
+  player.isBouncing = true
+  player.bounceArc = 0
+
+  // Takeoff ink drip
+  emitParticles(player.x, player.y + 10, 3, INK_DARK, 1.5, 2, { gravity: 0.05, maxLife: 20 })
+}
+
+canvas.addEventListener('mousemove', e => {
+  const pos = getCanvasPos(e.clientX, e.clientY)
+  mouseX = pos.x; mouseY = pos.y
+})
+
+canvas.addEventListener('click', e => {
+  handleClick(e.clientX, e.clientY)
+})
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault()
+  const t = e.touches[0]
+  const pos = getCanvasPos(t.clientX, t.clientY)
+  mouseX = pos.x; mouseY = pos.y
+  handleClick(t.clientX, t.clientY)
+}, { passive: false })
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault()
+  const t = e.touches[0]
+  const pos = getCanvasPos(t.clientX, t.clientY)
+  mouseX = pos.x; mouseY = pos.y
+}, { passive: false })
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') {
+    if (gameOver || gameWon) restart()
+  }
+  // Space: manual fire at nearest enemy or toward mouse
+  if (e.key === ' ' && !gameOver && !gameWon) {
+    e.preventDefault()
+    let best = null, bestD = Infinity
+    for (const en of enemies) {
+      const d = dist(player.x, player.y, en.x, en.y)
+      if (d < bestD) { bestD = d; best = en }
+    }
+    fireInkBomb(best ? best.x : mouseX, best ? best.y : mouseY)
+  }
+})
+
+// ============== UPDATE ==============
+function update() {
+  if (gameOver || gameWon) return
+  frameCount++
+
+  // Timer (every 60 frames)
+  if (frameCount % 60 === 0) {
+    timeLeft--
+    if (timeLeft <= 0) { gameOver = true; return }
+  }
+
+  // Wave scaling
+  if (frameCount % 360 === 0 && wave < 999) {
+    wave++
+    enemiesPerWave = 4 + wave * 2
+    enemiesSpawned = 0
+  }
+
+  // ---- Player bounce ----
+  if (player.isBouncing) {
+    player.x += player.bounceVX
+    player.y += player.bounceVY
+
+    // Bounce arc increases then decreases
+    const speed = dist(0, 0, player.bounceVX, player.bounceVY)
+    player.bounceArc = Math.sin(frameCount * 0.1) * clamp(speed * 0.8, 0, 20)
+    // Actually, let's compute a proper arc based on launch
+    // We track the initial speed and compute parabolic height
+    // Simpler: arc fades as speed decreases
+    player.bounceArc = speed * 1.2
+
+    // Friction
+    player.bounceVX *= 0.94
+    player.bounceVY *= 0.94
+
+    const dToTarget = dist(player.x, player.y, player.targetX, player.targetY)
+    if (dToTarget < 6 || speed < 0.4) {
+      // Landing
+      if (speed > 0.8) {
+        emitParticles(player.x, player.y + 8, 6, INK_DARK, 2, 3, { gravity: 0.03, maxLife: 25 })
+      }
+      player.x = player.targetX
+      player.y = player.targetY
+      player.bounceVX = 0
+      player.bounceVY = 0
+      player.bounceArc = 0
+      player.isBouncing = false
+    }
+
+    // Tilt in movement direction
+    if (speed > 0.5) {
+      const targetTilt = Math.atan2(player.bounceVY, player.bounceVX) * 0.2
+      player.tiltAngle += (targetTilt - player.tiltAngle) * 0.15
+    }
+  } else {
+    player.tiltAngle *= 0.92
+    player.bounceArc = 0
+  }
+
+  player.x = clamp(player.x, 15, W - 15)
+  player.y = clamp(player.y, 15, H - 15)
+
+  // Invincibility
+  if (player.invincible > 0) player.invincible--
+  if (player.fireCooldown > 0) player.fireCooldown--
+
+  // ---- Auto-fire at nearest enemy ----
+  if (player.fireCooldown === 0 && gameStarted) {
+    let best = null, bestD = AUTO_FIRE_RANGE
+    for (const en of enemies) {
+      const d = dist(player.x, player.y, en.x, en.y)
+      if (d < bestD) { bestD = d; best = en }
+    }
+    if (best) fireInkBomb(best.x, best.y)
+  }
+
+  // ---- Combo timer ----
+  if (comboTimer > 0) {
+    comboTimer--
+    if (comboTimer === 0) resetCombo()
+  }
+
+  // ---- Ink bombs ----
+  for (let i = inkBombs.length - 1; i >= 0; i--) {
+    const b = inkBombs[i]
+    b.x += b.vx
+    b.y += b.vy
+    b.life--
+
+    b.trail.push({ x: b.x, y: b.y })
+    if (b.trail.length > 10) b.trail.shift()
+
+    if (b.x < -40 || b.x > W + 40 || b.y < -40 || b.y > H + 40 || b.life <= 0) {
+      if (b.life <= 0) {
+        addInkSplat(b.x, b.y, 5 + rand(0, 5), '#444')
+        emitInkSplash(b.x, b.y, '#555', 0.3)
+      }
+      inkBombs.splice(i, 1)
+      continue
+    }
+
+    // Hit detection
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j]
+      if (dist(b.x, b.y, e.x, e.y) < b.r + e.r) {
+        // HIT! ── create ink splat & splash
+        const hitX = (b.x + e.x) / 2
+        const hitY = (b.y + e.y) / 2
+
+        addCombo()
+
+        // Splat size scales with combo
+        const splatSize = clamp(8 + combo * 3.5, 8, 60)
+        const splatColor = combo >= 7 ? '#e74c3c' : combo >= 4 ? '#e67e22' : combo >= 2 ? '#7f8c8d' : INK_BLACK
+        addInkSplat(hitX, hitY, splatSize, splatColor, combo >= 2)
+
+        // Splash particles - pick vibrant color
+        const splashColor = SPLASH_COLORS[Math.floor(Math.random() * SPLASH_COLORS.length)]
+        emitInkSplash(hitX, hitY, splashColor, 0.8 + combo * 0.15)
+
+        e.hp--
+        e.flash = 10
+
+        if (e.hp <= 0) {
+          // Enemy destroyed
+          addInkSplat(e.x, e.y, 15 + wave * 2, INK_BLACK)
+          emitInkSplash(e.x, e.y, splashColor, 2)
+          emitParticles(e.x, e.y, 18, INK_BLACK, 4, 4, { gravity: 0.05, maxLife: 35 })
+
+          const baseScore = 80 + wave * 15
+          const comboMult = 1 + combo * 0.35
+          const earnedScore = Math.floor(baseScore * comboMult)
+          score += earnedScore
+          totalKilled++
+
+          enemies.splice(j, 1)
+
+          if (score >= TARGET_SCORE) {
+            gameWon = true
+            // Victory ink burst
+            for (let k = 0; k < 5; k++) {
+              const c = SPLASH_COLORS[Math.floor(Math.random() * SPLASH_COLORS.length)]
+              emitInkSplash(rand(100, W - 100), rand(100, H - 100), c, 3)
+            }
+            return
+          }
+        }
+
+        inkBombs.splice(i, 1)
+        break
+      }
+    }
+  }
+
+  // ---- Enemy spawning ----
+  spawnCounter++
+  if (spawnCounter >= clamp(50 - wave * 2, 18, 60)) {
+    spawnCounter = 0
+    spawnEnemy()
+  }
+
+  // Wave transition when all spawned & cleared
+  if (enemiesSpawned >= enemiesPerWave && enemies.length === 0) {
+    wave++
+    enemiesPerWave = 4 + wave * 2
+    enemiesSpawned = 0
+  }
+
+  // ---- Enemy update ----
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i]
+    e.wobble += e.wobbleSpeed
+    if (e.flash > 0) e.flash--
+
+    // Move toward player
+    const dx = player.x - e.x
+    const dy = player.y - e.y
+    const d = dist(0, 0, dx, dy)
+    if (d > 0) {
+      e.x += (dx / d) * e.speed
+      e.y += (dy / d) * e.speed
+    }
+
+    // Player collision
+    if (player.invincible === 0) {
+      if (dist(player.x, player.y, e.x, e.y) < 18 + e.r) {
+        player.hp--
+        player.invincible = 60
+        emitInkSplash(player.x, player.y, '#c0392b', 1.2)
+        emitParticles(player.x, player.y, 12, INK_BLACK, 3, 3, { gravity: 0.05 })
+        resetCombo()
+        if (player.hp <= 0) { gameOver = true; return }
+      }
+    }
+  }
+
+  // ---- Ink splats ----
+  for (let i = inkSplats.length - 1; i >= 0; i--) {
+    const s = inkSplats[i]
+    s.life--
+    // Expand
+    if (s.radius < s.maxRadius) s.radius += (s.maxRadius - s.radius) * 0.08
+    s.alpha = clamp(s.life / s.maxLife, 0, 0.85)
+    if (s.life <= 0 || s.alpha < 0.01) {
+      inkSplats.splice(i, 1)
+    }
+  }
+
+  // ---- Particles ----
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]
+    p.x += p.vx
+    p.y += p.vy
+    p.vy += p.gravity || 0
+    p.vx *= p.drag || 0.97
+    p.vy *= p.drag || 0.97
+    p.life--
+    p.r *= 0.985
+    if (p.life <= 0 || p.r < 0.3) particles.splice(i, 1)
+  }
+}
+
+// ============== DRAWING ==============
+
+function drawBackground() {
+  // Rice-paper base
+  ctx.fillStyle = PAPER
+  ctx.fillRect(0, 0, W, H)
+
+  // Subtle texture dots
+  for (let i = 0; i < 300; i++) {
+    const x = (i * 137.5 + 23) % W
+    const y = (i * 97.3 + 71) % H
+    const a = 0.015 + (i % 6) * 0.008
+    ctx.fillStyle = `rgba(170,160,140,${a})`
+    ctx.fillRect(x, y, 1 + (i % 3), 1 + (i % 2))
+  }
+
+  // Ink-wash border
+  const grad = ctx.createRadialGradient(W / 2, H / 2, 200, W / 2, H / 2, 400)
+  grad.addColorStop(0, 'rgba(30,30,30,0)')
+  grad.addColorStop(1, 'rgba(30,30,30,0.15)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, W, H)
+
+  ctx.strokeStyle = 'rgba(30,30,30,0.25)'
+  ctx.lineWidth = 3
+  ctx.strokeRect(20, 55, W - 40, H - 75)
+}
+
+function drawBlobShape(cx, cy, r, points, variance, rotation, alpha) {
+  ctx.save()
+  ctx.globalAlpha = alpha != null ? alpha : 1
+  ctx.translate(cx, cy)
+  ctx.rotate(rotation || 0)
+  ctx.beginPath()
+  for (let i = 0; i <= points; i++) {
+    const angle = (i / points) * Math.PI * 2
+    const noise = Math.sin(angle * 3 + rotation) * variance + Math.sin(angle * 7) * 0.08
+    const rad = r * (1 + noise)
+    const px = Math.cos(angle) * rad
+    const py = Math.sin(angle) * rad
+    if (i === 0) ctx.moveTo(px, py)
+    else ctx.lineTo(px, py)
+  }
+  ctx.closePath()
+  ctx.restore()
+}
+
+function drawInkSplat(s) {
+  ctx.save()
+  ctx.globalAlpha = s.alpha
+
+  // Outer halo
+  ctx.globalAlpha = s.alpha * 0.2
+  ctx.fillStyle = s.isComboSplat ? (s.color || INK_BLACK) : '#888'
+  drawBlobShape(s.x, s.y, s.radius * 1.5, s.points + 3, s.variance * 0.8, s.rotation + 0.5)
+  ctx.fill()
+
+  // Main splat
+  ctx.globalAlpha = s.alpha
+  ctx.fillStyle = s.color || INK_BLACK
+  drawBlobShape(s.x, s.y, s.radius, s.points, s.variance, s.rotation)
+  ctx.fill()
+
+  // Inner lighter area
+  ctx.globalAlpha = s.alpha * 0.3
+  ctx.fillStyle = s.isComboSplat ? s.color : '#555'
+  drawBlobShape(s.x + s.radius * 0.1, s.y - s.radius * 0.1, s.radius * 0.5, s.points - 2, s.variance * 0.6, s.rotation + 1)
+  ctx.fill()
+
+  // Satellite dots
+  ctx.globalAlpha = s.alpha * 0.4
+  for (let i = 0; i < Math.min(6, Math.floor(s.radius / 4)); i++) {
+    const a = (i / 6) * Math.PI * 2 + s.rotation
+    const dr = s.radius * (0.7 + Math.random() * 0.5)
+    ctx.fillStyle = s.color || INK_BLACK
+    ctx.beginPath()
+    ctx.arc(s.x + Math.cos(a) * dr, s.y + Math.sin(a) * dr, rand(1, 2.5), 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  ctx.restore()
+}
+
+function drawInkBottle() {
+  ctx.save()
+  ctx.translate(player.x, player.y - player.bounceArc)
+
+  // Tilt
+  if (player.isBouncing) {
+    ctx.rotate(player.tiltAngle)
+    const speed = dist(0, 0, player.bounceVX, player.bounceVY)
+    const sq = 1 + speed * 0.015
+    ctx.scale(1 / sq, sq)
+  }
+
+  const bhw = BW / 2
+  const bhh = BH / 2
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.08)'
+  ctx.beginPath()
+  ctx.ellipse(2, bhh + 3, bhw + 4, 4, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Bottle body
+  ctx.fillStyle = INK_BLACK
+  ctx.beginPath()
+  ctx.moveTo(-bhw, -bhh * 0.25)
+  ctx.quadraticCurveTo(-bhw - 1, bhh * 0.5, -bhw * 0.65, bhh * 0.85)
+  ctx.quadraticCurveTo(0, bhh + 4, bhw * 0.65, bhh * 0.85)
+  ctx.quadraticCurveTo(bhw + 1, bhh * 0.5, bhw, -bhh * 0.25)
+  // Neck
+  ctx.lineTo(bhw * 0.42, -bhh * 0.25)
+  ctx.lineTo(bhw * 0.38, -bhh * 0.65)
+  ctx.lineTo(-bhw * 0.38, -bhh * 0.65)
+  ctx.lineTo(-bhw * 0.42, -bhh * 0.25)
+  ctx.closePath()
+  ctx.fill()
+
+  // Glass highlight
+  ctx.fillStyle = 'rgba(80,80,80,0.25)'
+  ctx.beginPath()
+  ctx.ellipse(-bhw * 0.38, bhh * 0.1, bhw * 0.15, bhh * 0.45, -0.15, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Ink visible through glass
+  ctx.fillStyle = 'rgba(10,10,20,0.5)'
+  ctx.beginPath()
+  ctx.ellipse(0, bhh * 0.15, bhw * 0.4, bhh * 0.35, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Cap
+  ctx.fillStyle = '#222'
+  ctx.fillRect(-bhw * 0.32, -bhh * 0.7, bhw * 0.64, bhh * 0.12)
+  ctx.fillStyle = '#111'
+  ctx.fillRect(-bhw * 0.36, -bhh * 0.65, bhw * 0.72, bhh * 0.04)
+
+  // 墨 character
+  ctx.fillStyle = 'rgba(180,180,180,0.4)'
+  ctx.font = '9px serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('墨', 0, bhh * 0.1)
+
+  // Ink drip when bouncing
+  if (player.isBouncing) {
+    ctx.fillStyle = 'rgba(30,30,30,0.3)'
+    ctx.beginPath()
+    const dY = bhh + 4 + Math.sin(frameCount * 0.15) * 2
+    ctx.ellipse(0, dY, 1.5, 3 + Math.sin(frameCount * 0.2) * 1, 0, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  ctx.restore()
+
+  // Invincibility aura
+  if (player.invincible > 0 && Math.floor(player.invincible / 5) % 2 === 0) {
+    ctx.save()
+    ctx.globalAlpha = 0.2
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 2
+    drawBlobShape(player.x, player.y - player.bounceArc, 28, 10, 0.25, frameCount * 0.03)
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
+function drawEnemy(e) {
+  ctx.save()
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.08)'
+  drawBlobShape(e.x + 2, e.y + 3, e.r + 3, e.points, e.variance, e.rotation)
+  ctx.fill()
+
+  // Pulsing wobble
+  const wobR = e.r + Math.sin(e.wobble) * 1.5
+
+  // Main body
+  ctx.fillStyle = e.flash > 0 ? '#555' : INK_BLACK
+  drawBlobShape(e.x, e.y, wobR, e.points, e.variance, e.rotation)
+  ctx.fill()
+
+  // Inner lighter area
+  ctx.fillStyle = e.flash > 0 ? 'rgba(120,120,120,0.4)' : 'rgba(60,60,60,0.35)'
+  drawBlobShape(e.x + wobR * 0.08, e.y - wobR * 0.08, wobR * 0.45, 6, 0.15, e.rotation + 1)
+  ctx.fill()
+
+  // Eyes
+  if (e.flash <= 0) {
+    const eyeOff = wobR * 0.3
+    const eyeR = wobR * 0.16
+    ctx.fillStyle = '#f0f0f0'
+    ctx.beginPath()
+    ctx.arc(e.x - eyeOff, e.y - eyeOff * 0.2, eyeR, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(e.x + eyeOff, e.y - eyeOff * 0.2, eyeR * 0.85, 0, Math.PI * 2)
+    ctx.fill()
+    // Pupils (look toward player)
+    const pd = dist(e.x, e.y, player.x, player.y) || 1
+    const pdx = (player.x - e.x) / pd * eyeR * 0.3
+    const pdy = (player.y - e.y) / pd * eyeR * 0.3
+    ctx.fillStyle = INK_BLACK
+    ctx.beginPath()
+    ctx.arc(e.x - eyeOff + pdx, e.y - eyeOff * 0.2 + pdy, eyeR * 0.45, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(e.x + eyeOff + pdx, e.y - eyeOff * 0.2 + pdy, eyeR * 0.4, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // HP bar
+  if (e.hp < e.maxHp) {
+    const bw = e.r * 1.6
+    const bh = 3
+    const by = e.y + e.r + 6
+    ctx.fillStyle = 'rgba(0,0,0,0.15)'
+    ctx.fillRect(e.x - bw / 2, by, bw, bh)
+    ctx.fillStyle = e.flash > 0 ? 'rgba(200,200,200,0.5)' : 'rgba(30,30,30,0.5)'
+    ctx.fillRect(e.x - bw / 2, by, bw * (e.hp / e.maxHp), bh)
+  }
+
+  // Flash ring
+  if (e.flash > 0) {
+    ctx.globalAlpha = e.flash / 10 * 0.3
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 2
+    drawBlobShape(e.x, e.y, wobR + 4, e.points, e.variance, e.rotation)
+    ctx.stroke()
+  }
+
+  ctx.restore()
+}
+
+function drawInkBombProj(b) {
+  ctx.save()
+
+  // Trail
+  for (let i = 0; i < b.trail.length; i++) {
+    const t = b.trail[i]
+    const alpha = (i / b.trail.length) * 0.35
+    const size = b.r * (i / b.trail.length) * 0.5
+    ctx.globalAlpha = alpha
+    ctx.fillStyle = INK_DARK
+    ctx.beginPath()
+    ctx.arc(t.x, t.y, size, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // Main drop
+  ctx.globalAlpha = 1
+  ctx.fillStyle = INK_BLACK
+  ctx.beginPath()
+  ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Highlight
+  ctx.fillStyle = 'rgba(100,100,100,0.3)'
+  ctx.beginPath()
+  ctx.arc(b.x - b.r * 0.2, b.y - b.r * 0.25, b.r * 0.35, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.restore()
+}
+
+function drawParticlesLayer() {
+  for (const p of particles) {
+    ctx.save()
+    ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1)
+    ctx.fillStyle = p.color
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, Math.max(0.3, p.r), 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+}
+
+function drawUI() {
+  // Top bar - semi-transparent paper
+  ctx.fillStyle = 'rgba(245,240,232,0.88)'
+  ctx.fillRect(0, 0, W, 52)
+  ctx.strokeStyle = 'rgba(30,30,30,0.15)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, 52)
+  ctx.lineTo(W, 52)
+  ctx.stroke()
+
+  ctx.textBaseline = 'middle'
+
+  // HP hearts
+  ctx.fillStyle = INK_BLACK
+  ctx.font = 'bold 15px serif'
+  ctx.textAlign = 'left'
+  let hpStr = ''
+  for (let i = 0; i < player.maxHp; i++) {
+    hpStr += i < player.hp ? '❤' : '♡'
+  }
+  ctx.fillText('墨 ' + hpStr, 18, 26)
+
+  // Score
+  ctx.textAlign = 'center'
+  ctx.font = 'bold 18px serif'
+  ctx.fillStyle = INK_BLACK
+  const scorePct = Math.min(score / TARGET_SCORE * 100, 100)
+  ctx.fillText('墨点  ' + score + ' / ' + TARGET_SCORE, W / 2, 26)
+
+  // Score progress bar
+  const barW = 140
+  const barH = 4
+  const barX = W / 2 - barW / 2
+  const barY = 38
+  ctx.fillStyle = 'rgba(0,0,0,0.08)'
+  ctx.fillRect(barX, barY, barW, barH)
+  ctx.fillStyle = INK_BLACK
+  ctx.fillRect(barX, barY, barW * (score / TARGET_SCORE), barH)
+
+  // Timer
+  ctx.textAlign = 'right'
+  ctx.fillStyle = timeLeft <= 15 ? '#c0392b' : INK_BLACK
+  ctx.font = (timeLeft <= 15 ? 'bold 20px' : 'bold 16px') + ' serif'
+  ctx.fillText('⌛ ' + timeLeft + 's', W - 18, 26)
+
+  // Combo display
+  if (combo >= 2) {
+    ctx.save()
+    ctx.textAlign = 'center'
+    const pulse = 1 + Math.sin(frameCount * 0.08) * 0.04
+    ctx.translate(W / 2, 82)
+    ctx.scale(pulse, pulse)
+    ctx.fillStyle = INK_BLACK
+    ctx.font = 'bold 22px serif'
+    ctx.fillText('连击 ×' + combo, 0, 0)
+
+    // Decorative ink brush lines
+    ctx.strokeStyle = 'rgba(30,30,30,0.15)'
+    ctx.lineWidth = 2
+    const lineLen = 30 + combo * 3
+    ctx.beginPath()
+    ctx.moveTo(-lineLen, 10)
+    ctx.quadraticCurveTo(-lineLen * 0.6, 5, -10, 8)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(lineLen, 10)
+    ctx.quadraticCurveTo(lineLen * 0.6, 5, 10, 8)
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // Wave + kills in bottom corners
+  ctx.fillStyle = 'rgba(30,30,30,0.35)'
+  ctx.font = '12px serif'
+  ctx.textBaseline = 'bottom'
+  ctx.textAlign = 'left'
+  ctx.fillText('浪 ' + wave + '  杀 ' + totalKilled, 18, H - 14)
+  ctx.textAlign = 'right'
+  ctx.fillText('墨怪: ' + enemies.length, W - 18, H - 14)
+
+  // "Click to move" hint when game hasn't started
+  if (!gameStarted && !gameOver && !gameWon) {
+    ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    const fade = 0.5 + Math.sin(frameCount * 0.03) * 0.3
+    ctx.globalAlpha = fade
+    ctx.fillStyle = INK_BLACK
+    ctx.font = '20px serif'
+    ctx.fillText('点击地面开始泼墨', W / 2, H / 2 + 80)
+    ctx.restore()
+  }
+}
+
+function drawEndScreen() {
+  ctx.save()
+
+  // Semi-transparent overlay
+  ctx.fillStyle = `rgba(245,240,232,${gameWon ? 0.88 : 0.92})`
+  ctx.fillRect(0, 0, W, H)
+
+  // Background ink splashes
+  ctx.globalAlpha = 0.08
+  ctx.fillStyle = INK_BLACK
+  drawBlobShape(W / 2, H / 2, 220, 14, 0.4, frameCount * 0.005)
+  ctx.fill()
+  drawBlobShape(W / 2 - 60, H / 2 + 40, 160, 10, 0.45, frameCount * 0.008 + 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  if (gameWon) {
+    ctx.fillStyle = INK_BLACK
+    ctx.font = 'bold 56px serif'
+    ctx.fillText('墨韵天成', W / 2, H / 2 - 70)
+    ctx.font = '24px serif'
+    ctx.fillStyle = '#444'
+    ctx.fillText('墨点 ' + score + '  |  最高连击 ×' + maxCombo, W / 2, H / 2)
+    ctx.font = '18px serif'
+    ctx.fillStyle = '#888'
+    ctx.fillText('按 R 键 再泼一墨', W / 2, H / 2 + 60)
+  } else {
+    ctx.fillStyle = INK_BLACK
+    ctx.font = 'bold 56px serif'
+    ctx.fillText('墨 尽', W / 2, H / 2 - 70)
+    ctx.font = '20px serif'
+    ctx.fillStyle = '#555'
+    if (timeLeft <= 0) {
+      ctx.fillText('时辰已到 · 墨点 ' + score, W / 2, H / 2)
+    } else {
+      ctx.fillText('墨尽人亡 · 墨点 ' + score, W / 2, H / 2)
+    }
+    ctx.font = '18px serif'
+    ctx.fillStyle = '#888'
+    ctx.fillText('按 R 键 重开墨局', W / 2, H / 2 + 50)
+  }
+
+  ctx.restore()
+}
+
+// ============== MAIN DRAW ==============
+function draw() {
+  drawBackground()
+
+  // Ground ink splats (background layer)
+  for (const s of inkSplats) drawInkSplat(s)
+
+  // Enemies
+  for (const e of enemies) drawEnemy(e)
+
+  // Ink bombs
+  for (const b of inkBombs) drawInkBombProj(b)
+
+  // Particles
+  drawParticlesLayer()
+
+  // Player on top
+  drawInkBottle()
+
+  // UI
+  drawUI()
+
+  // End overlay
+  if (gameOver || gameWon) drawEndScreen()
+}
+
+// ============== RESTART ==============
+function restart() {
+  player.x = W / 2; player.y = H / 2
+  player.targetX = W / 2; player.targetY = H / 2
+  player.bounceVX = 0; player.bounceVY = 0
+  player.isBouncing = false
+  player.bounceArc = 0
+  player.hp = MAX_HP
+  player.invincible = 0
+  player.fireCooldown = 0
+  player.tiltAngle = 0
+
+  inkBombs = []
+  enemies = []
+  inkSplats = []
+  particles = []
+
+  score = 0
+  timeLeft = TIME_LIMIT
+  wave = 1
+  enemiesPerWave = 4
+  enemiesSpawned = 0
+  spawnCounter = 0
+  totalKilled = 0
+  frameCount = 0
+
+  combo = 0
+  comboTimer = 0
+  maxCombo = 0
+
+  gameOver = false
+  gameWon = false
+  gameStarted = false
+}
+
+// ============== GAME LOOP ==============
+function gameLoop() {
+  update()
+  draw()
+  requestAnimationFrame(gameLoop)
+}
+gameLoop()
+
+// ============== RESIZE ==============
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H)
+  canvas.style.width = (W * scale) + 'px'
+  canvas.style.height = (H * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+</script>
+</body>
+</html>

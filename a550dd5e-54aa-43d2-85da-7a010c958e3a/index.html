@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  核心玩法：玩家在公园里与藤蔓大战，公园里有很多墙上爬满藤蔓，藤蔓会向玩家袭击，玩家要穿越公园拿到胜利果实
+-->
+
+<!--
+  AI Prompt / 提示词:
+  核心玩法：玩家在公园里与藤蔓大战，公园里有很多墙上爬满藤蔓，藤蔓会向玩家袭击，玩家要穿越公园拿到胜利果实
+-->
+<meta name="description" content="核心玩法：玩家在公园里与藤蔓大战，公园里有很多墙上爬满藤蔓，藤蔓会向玩家袭击，玩家要穿越公园拿到胜利果实">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>藤蔓大战</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    background: #0a0a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+#gameContainer {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+canvas {
+    display: block;
+    image-rendering: auto;
+    border-radius: 4px;
+    box-shadow: 0 0 40px rgba(34, 197, 94, 0.15);
+}
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gc"></canvas>
+</div>
+<script>
+// ============================================================
+//  藤蔓大战 (Vine War) — 单文件 HTML5 Canvas 游戏
+//  核心玩法：玩家在公园里与藤蔓大战，穿越公园拿到胜利果实
+// ============================================================
+
+// ======================== 配置 ========================
+const TILE_SIZE = 48;
+const MAP_COLS = 35;
+const MAP_ROWS = 25;
+const WORLD_W = MAP_COLS * TILE_SIZE;  // 1680
+const WORLD_H = MAP_ROWS * TILE_SIZE;  // 1200
+const VIEW_W = 960;
+const VIEW_H = 640;
+
+const PLAYER_RADIUS = 13;
+const PLAYER_SPEED = 140;
+const PLAYER_MAX_HP = 5;
+const ATTACK_RADIUS = 85;
+const ATTACK_COOLDOWN = 0.38;
+const ATTACK_DURATION = 0.18;
+const INVINCIBLE_TIME = 0.9;
+
+const TENDREL_SPEED = 65;
+const VINE_INTERVAL_BASE = 3.0;
+const VINE_MIN_INTERVAL = 1.0;
+const MAX_TENDRILS = 18;
+const TENDRIL_RADIUS = 4;
+
+// Tile types
+const T_GRASS    = 0;
+const T_WALL     = 1;
+const T_PATH     = 2;
+const T_VINE_WALL = 3;
+
+// ======================== Canvas ========================
+const canvas = document.getElementById('gc');
+const ctx = canvas.getContext('2d');
+
+let canvasW = VIEW_W, canvasH = VIEW_H;
+
+function resizeCanvas() {
+    const maxW = window.innerWidth * 0.98;
+    const maxH = window.innerHeight * 0.98;
+    const ratio = VIEW_W / VIEW_H;
+    let w = maxW, h = maxH;
+    if (w / h > ratio) w = h * ratio;
+    else h = w / ratio;
+    canvas.style.width = Math.floor(w) + 'px';
+    canvas.style.height = Math.floor(h) + 'px';
+    canvas.width = VIEW_W;
+    canvas.height = VIEW_H;
+    canvasW = VIEW_W;
+    canvasH = VIEW_H;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// ======================== 程序化音效 (Web Audio API) ========================
+let audioCtx = null;
+
+function getAudioCtx() {
+    if (!audioCtx) {
+        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { return null; }
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+}
+
+function playTone(freq, duration, type, volume, slide) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = type || 'square';
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(slide, ctx.currentTime + duration);
+    gain.gain.setValueAtTime(volume || 0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + duration);
+}
+
+function playNoise(duration, volume) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const bufSize = Math.floor(ctx.sampleRate * duration);
+    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
+    const src = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    src.buffer = buf;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(volume || 0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    src.start();
+}
+
+function playSlash()   { playTone(600, 0.08, 'sawtooth', 0.08, 200); playNoise(0.04, 0.04); }
+function playHit()     { playTone(200, 0.12, 'square', 0.12, 60); playNoise(0.08, 0.06); }
+function playPickup()  { playTone(800, 0.06, 'sine', 0.1, 1200); setTimeout(() => playTone(1200, 0.1, 'sine', 0.1), 60); }
+function playWin()     { playTone(600, 0.1, 'sine', 0.1, 900); setTimeout(() => playTone(900, 0.1, 'sine', 0.1), 100); setTimeout(() => playTone(1200, 0.15, 'sine', 0.1), 200); }
+function playLose()    { playTone(300, 0.2, 'sawtooth', 0.1, 100); playNoise(0.15, 0.05); }
+function playVineDie() { playTone(400, 0.05, 'square', 0.06, 150); }
+function playStep()    { /* optional footstep - very subtle */ playTone(80, 0.02, 'sine', 0.02, 70); }
+
+// ======================== 游戏状态 ========================
+const STATE_TITLE    = 0;
+const STATE_PLAYING  = 1;
+const STATE_GAMEOVER = 2;
+const STATE_WIN      = 3;
+
+let gameState = STATE_TITLE;
+let gameTime = 0;
+let isTouchDevice = false;
+
+// ======================== 地图 ========================
+let map = [];
+let vineSpawners = [];
+
+function buildMap() {
+    map = Array.from({ length: MAP_ROWS }, () => Array(MAP_COLS).fill(T_GRASS));
+
+    // 边界墙
+    for (let c = 0; c < MAP_COLS; c++) { map[0][c] = T_WALL; map[MAP_ROWS-1][c] = T_WALL; }
+    for (let r = 0; r < MAP_ROWS; r++) { map[r][0] = T_WALL; map[r][MAP_COLS-1] = T_WALL; }
+
+    // 在网格位置放置墙柱（形成公园的围墙结构）
+    const wallGroups = [
+        // [r1, c1, r2, c2] — 矩形墙区域
+        // 上区域
+        [2, 2, 4, 5],     // 左上 1
+        [2, 8, 4, 10],    // 左上 2
+        [2, 14, 2, 16],   // 上中窄
+        [2, 20, 4, 23],   // 右上 1
+        [2, 27, 4, 30],   // 右上 2
+
+        // 中上区域
+        [6, 2, 8, 5],     // 左中上 1
+        [6, 8, 8, 10],    // 左中上 2
+        [6, 14, 8, 16],   // 中上
+        [6, 22, 8, 25],   // 右中上
+        [6, 28, 8, 30],   // 右中上
+
+        // 中间区域
+        [10, 2, 12, 5],   // 左中
+        [10, 8, 12, 10],  // 左中
+        [10, 14, 12, 16], // 正中
+        [10, 22, 12, 25], // 右中
+        [10, 28, 12, 31], // 右中
+
+        // 中下区域
+        [14, 2, 16, 5],   // 左中下
+        [14, 8, 16, 10],  // 左中下
+        [14, 14, 16, 16], // 中下
+        [14, 22, 16, 25], // 右中下
+        [14, 28, 16, 31], // 右中下
+
+        // 下区域
+        [18, 2, 20, 5],   // 左下
+        [18, 8, 20, 10],  // 左下
+        [18, 14, 18, 16], // 下中窄
+        [18, 20, 20, 23], // 右下
+        [18, 28, 20, 30], // 右下
+
+        // 一些独立柱子
+        [3, 12, 4, 12],
+        [7, 19, 8, 19],
+        [11, 6, 12, 6],
+        [15, 19, 16, 19],
+        [19, 12, 20, 12],
+
+        // 中央通道障碍柱（防止直线上行）
+        [8, 17, 8, 17],
+        [14, 17, 14, 17],
+    ];
+
+    for (const [r1, c1, r2, c2] of wallGroups) {
+        for (let r = r1; r <= r2; r++) {
+            for (let c = c1; c <= c2; c++) {
+                if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS) {
+                    map[r][c] = T_WALL;
+                }
+            }
+        }
+    }
+
+    // 在地图中央开辟一条路径区域
+    const pathTiles = [
+        // 纵向主路径 (从下到上蜿蜒)
+        [3,6],[4,6],[5,6],[6,6],[7,6],[8,6],[9,6],[10,6],[11,6],[12,6],[13,6],
+        [16,12],[15,12],[14,12],[13,12],[12,12],[11,12],[10,12],
+        [14,18],[15,18],[16,18],[17,18],[18,18],
+        [3,18],[4,18],[5,18],[6,18],[7,18],[8,18],[9,18],[10,18],
+        [13,24],[14,24],[15,24],[16,24],[17,24],[18,24],
+        [3,26],[4,26],[5,26],[6,26],[7,26],[8,26],
+        [6,28],[6,29],[6,30],[6,31],
+        [8,4],[9,4],[10,4],[11,4],[12,4],[13,4],[14,4],
+        [18,6],[19,6],
+        [20,18],[21,18],[22,18],
+    ];
+
+    for (const [r, c] of pathTiles) {
+        if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS && map[r][c] !== T_WALL) {
+            map[r][c] = T_PATH;
+        }
+    }
+
+    // 清理：确保路径上无障碍
+    // 确保从起点到终点有路
+
+    // 藤蔓生成点 — 在墙壁上朝向路径的面
+    vineSpawners = [];
+    // 定义墙壁上朝向路径的藤蔓面
+    const vineFaces = [
+        // 每面墙壁面向路径的一侧
+        { r1: 2, r2: 4, c: 5 },     // 上左1 右面
+        { r1: 2, r2: 4, c: 8 },     // 上左2 左面
+        { r1: 2, r2: 4, c: 10 },    // 上左2 右面
+        { r1: 2, r2: 2, c: 14 },    // 上中窄 左面
+        { r1: 2, r2: 2, c: 16 },    // 上中窄 右面
+        { r1: 2, r2: 4, c: 20 },    // 右上1 左面
+        { r1: 2, r2: 4, c: 23 },    // 右上1 右面
+        { r1: 2, r2: 4, c: 27 },    // 右上2 左面
+
+        { r1: 6, r2: 8, c: 5 },     // 左中上1 右面
+        { r1: 6, r2: 8, c: 8 },     // 左中上2 左面
+        { r1: 6, r2: 8, c: 14 },    // 中上 左面
+        { r1: 6, r2: 8, c: 16 },    // 中上 右面
+        { r1: 6, r2: 8, c: 22 },    // 右中上 左面
+        { r1: 6, r2: 8, c: 28 },    // 右中上 左面
+
+        { r1: 10, r2: 12, c: 5 },   // 左中 右面
+        { r1: 10, r2: 12, c: 8 },   // 左中 左面
+        { r1: 10, r2: 12, c: 14 },  // 正中 左面
+        { r1: 10, r2: 12, c: 16 },  // 正中 右面
+        { r1: 10, r2: 12, c: 22 },  // 右中 左面
+        { r1: 10, r2: 12, c: 28 },  // 右中 左面
+
+        { r1: 14, r2: 16, c: 5 },   // 左中下 右面
+        { r1: 14, r2: 16, c: 8 },   // 左中下 左面
+        { r1: 14, r2: 16, c: 14 },  // 中下 左面
+        { r1: 14, r2: 16, c: 16 },  // 中下 右面
+        { r1: 14, r2: 16, c: 22 },  // 右中下 左面
+        { r1: 14, r2: 16, c: 28 },  // 右中下 左面
+
+        { r1: 18, r2: 20, c: 5 },   // 左下 右面
+        { r1: 18, r2: 20, c: 8 },   // 左下 左面
+        { r1: 18, r2: 18, c: 14 },  // 下中窄 左面
+        { r1: 18, r2: 18, c: 16 },  // 下中窄 右面
+        { r1: 18, r2: 20, c: 20 },  // 右下 左面
+        { r1: 18, r2: 20, c: 28 },  // 右下 左面
+
+        // 额外一些柱子的藤蔓
+        { r1: 3, r2: 4, c: 12 },
+        { r1: 7, r2: 8, c: 19 },
+        { r1: 11, r2: 12, c: 6 },
+        { r1: 15, r2: 16, c: 19 },
+        { r1: 19, r2: 20, c: 12 },
+
+        // 中央障碍柱藤蔓
+        { r1: 8, r2: 8, c: 17 },
+        { r1: 14, r2: 14, c: 17 },
+    ];
+
+    for (const { r1, r2, c } of vineFaces) {
+        for (let r = r1; r <= r2; r++) {
+            if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS && map[r][c] === T_WALL) {
+                // 把这个墙壁标记为藤蔓墙
+                map[r][c] = T_VINE_WALL;
+                vineSpawners.push({ row: r, col: c, timer: 1.5 + Math.random() * 2.5 });
+            }
+        }
+    }
+}
+
+buildMap();
+
+// 确保路径连通 - 手动打通一些关键通道
+function ensurePath() {
+    const openPath = [
+        // 在墙之间开辟通道
+        [3, 11], [12, 11],
+        [9, 17], [10, 17],
+        [5, 24], [6, 24],
+        [8, 7], [9, 7],
+    ];
+    for (const [r, c] of openPath) {
+        if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS && map[r][c] === T_WALL) {
+            map[r][c] = T_PATH;
+        }
+    }
+}
+ensurePath();
+
+// 玩家起始 & 果实位置
+const START_COL = 17;
+const START_ROW = 22;
+const FRUIT_COL = 17;
+const FRUIT_ROW = 1;
+
+// 确保起始点和果实点可通行
+if (map[START_ROW] && map[START_ROW][START_COL] === T_WALL) map[START_ROW][START_COL] = T_PATH;
+if (map[FRUIT_ROW] && map[FRUIT_ROW][FRUIT_COL] === T_WALL) map[FRUIT_ROW][FRUIT_COL] = T_PATH;
+
+// ======================== 玩家 ========================
+const player = {
+    x: START_COL * TILE_SIZE + TILE_SIZE / 2,
+    y: START_ROW * TILE_SIZE + TILE_SIZE / 2,
+    vx: 0, vy: 0,
+    radius: PLAYER_RADIUS,
+    hp: PLAYER_MAX_HP,
+    maxHp: PLAYER_MAX_HP,
+    dir: 1,
+    attacking: false,
+    attackTimer: 0,
+    attackCooldown: 0,
+    invincible: 0,
+    isMoving: false,
+    stepTimer: 0,
+};
+
+function resetPlayer() {
+    player.x = START_COL * TILE_SIZE + TILE_SIZE / 2;
+    player.y = START_ROW * TILE_SIZE + TILE_SIZE / 2;
+    player.vx = 0; player.vy = 0;
+    player.hp = PLAYER_MAX_HP;
+    player.attacking = false;
+    player.attackTimer = 0;
+    player.attackCooldown = 0;
+    player.invincible = 0;
+    player.isMoving = false;
+    player.dir = 1;
+    player.stepTimer = 0;
+}
+
+// ======================== 藤蔓系统 ========================
+let tendrils = [];
+let vineParticles = [];
+
+function createTendril(spawner) {
+    if (tendrils.length >= MAX_TENDRILS || player.hp <= 0) return;
+    if (gameState !== STATE_PLAYING) return;
+
+    const cx = spawner.col * TILE_SIZE + TILE_SIZE / 2;
+    const cy = spawner.row * TILE_SIZE + TILE_SIZE / 2;
+    const dx = player.x - cx;
+    const dy = player.y - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1) return;
+
+    const nx = dx / dist, ny = dy / dist;
+
+    // 确定藤蔓从墙的哪个面伸出
+    const faceX = nx > 0 ? 1 : -1;
+    const faceY = ny > 0 ? 1 : -1;
+    const offset = TILE_SIZE * 0.4;
+    const emergeX = cx + faceX * offset;
+    const emergeY = cy + faceY * offset;
+
+    tendrils.push({
+        x: emergeX, y: emergeY,
+        originX: cx, originY: cy,
+        vx: nx * TENDREL_SPEED,
+        vy: ny * TENDREL_SPEED,
+        radius: TENDRIL_RADIUS,
+        alive: true, age: 0,
+        wobble: Math.random() * Math.PI * 2,
+        wobbleSpeed: 2.5 + Math.random() * 2.5,
+        wobbleAmp: 3 + Math.random() * 4,
+        maxLife: 4 + Math.random() * 2,
+        trail: [],
+        active: true,
+    });
+}
+
+function updateTendrils(dt) {
+    for (let i = tendrils.length - 1; i >= 0; i--) {
+        const t = tendrils[i];
+        t.age += dt;
+
+        // 摆动
+        t.wobble += t.wobbleSpeed * dt;
+        const wobOff = Math.sin(t.wobble) * t.wobbleAmp;
+        const perpX = -t.vy, perpY = t.vx;
+        const pl = Math.sqrt(perpX * perpX + perpY * perpY) || 1;
+        const wOffX = (perpX / pl) * wobOff * 0.15;
+        const wOffY = (perpY / pl) * wobOff * 0.15;
+
+        t.x += t.vx * dt + wOffX;
+        t.y += t.vy * dt + wOffY;
+
+        // 轨迹
+        t.trail.push({ x: t.x, y: t.y, life: 1 });
+        if (t.trail.length > 12) t.trail.shift();
+
+        // 衰老
+        if (t.age > t.maxLife) t.alive = false;
+
+        // 限制距离（从起点出发的最大距离）
+        const dx = t.x - t.originX;
+        const dy = t.y - t.originY;
+        if (dx * dx + dy * dy > 320 * 320) t.alive = false;
+
+        // 撞墙消失（允许出墙一小段距离）
+        const col = Math.floor(t.x / TILE_SIZE);
+        const row = Math.floor(t.y / TILE_SIZE);
+        if (row >= 0 && row < MAP_ROWS && col >= 0 && col < MAP_COLS) {
+            if (map[row][col] === T_WALL || map[row][col] === T_VINE_WALL) {
+                const distFromOrigin = Math.sqrt((t.x - t.originX) ** 2 + (t.y - t.originY) ** 2);
+                if (distFromOrigin > TILE_SIZE * 0.6) {
+                    t.alive = false;
+                    spawnVineParticles(t.x, t.y, 3);
+                }
+            }
+        }
+
+        if (t.x < 0 || t.x > WORLD_W || t.y < 0 || t.y > WORLD_H) t.alive = false;
+
+        // 轨迹消退
+        for (let j = t.trail.length - 1; j >= 0; j--) {
+            t.trail[j].life -= dt * 3;
+            if (t.trail[j].life <= 0) t.trail.splice(j, 1);
+        }
+
+        if (!t.alive) tendrils.splice(i, 1);
+    }
+}
+
+function spawnVineParticles(x, y, count) {
+    for (let k = 0; k < count; k++) {
+        vineParticles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 100,
+            vy: (Math.random() - 0.5) * 100,
+            life: 0.5 + Math.random() * 0.4,
+            maxLife: 0.7 + Math.random() * 0.4,
+            size: 2 + Math.random() * 3,
+            color: `hsl(${110 + Math.random() * 30}, 75%, ${35 + Math.random() * 30}%)`,
+        });
+    }
+}
+
+function checkTendrilCollision() {
+    if (player.invincible > 0) return false;
+    for (const t of tendrils) {
+        const dx = player.x - t.x;
+        const dy = player.y - t.y;
+        if (dx * dx + dy * dy < (player.radius + t.radius) * (player.radius + t.radius)) {
+            t.alive = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+// ======================== 攻击系统 ========================
+function playerAttack() {
+    if (player.attackCooldown > 0) return;
+    player.attacking = true;
+    player.attackTimer = ATTACK_DURATION;
+    player.attackCooldown = ATTACK_COOLDOWN;
+    playSlash();
+
+    const r2 = ATTACK_RADIUS * ATTACK_RADIUS;
+    let hitCount = 0;
+    for (let i = tendrils.length - 1; i >= 0; i--) {
+        const t = tendrils[i];
+        const dx = player.x - t.x;
+        const dy = player.y - t.y;
+        if (dx * dx + dy * dy < r2) {
+            t.alive = false;
+            spawnVineParticles(t.x, t.y, 5);
+            hitCount++;
+        }
+    }
+    if (hitCount > 0) playVineDie();
+}
+
+// ======================== 粒子系统 ========================
+let particles = [];
+
+// 屏幕震动
+let shakeDuration = 0;
+let shakeIntensity = 0;
+
+function triggerShake(duration = 0.15, intensity = 4) {
+    shakeDuration = duration;
+    shakeIntensity = intensity;
+}
+
+function updateParticles(dt) {
+    for (let i = vineParticles.length - 1; i >= 0; i--) {
+        const p = vineParticles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 50 * dt;
+        p.life -= dt;
+        if (p.life <= 0) vineParticles.splice(i, 1);
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.life -= dt;
+        if (p.gravity) p.vy += 60 * dt;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+    // 震动衰减
+    if (shakeDuration > 0) shakeDuration -= dt;
+}
+
+function emitAttackParticles() {
+    for (let i = 0; i < 12; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 80;
+        particles.push({
+            x: player.x, y: player.y,
+            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+            life: 0.3 + Math.random() * 0.3,
+            color: `hsl(48, 100%, ${60 + Math.random() * 30}%)`,
+            size: 2 + Math.random() * 3, gravity: false,
+        });
+    }
+}
+
+function emitHitParticles() {
+    for (let i = 0; i < 12; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 30 + Math.random() * 60;
+        particles.push({
+            x: player.x, y: player.y,
+            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+            life: 0.4 + Math.random() * 0.3,
+            color: '#ef4444', size: 3 + Math.random() * 3, gravity: false,
+        });
+    }
+}
+
+function emitWinParticles() {
+    const fx = FRUIT_COL * TILE_SIZE + TILE_SIZE / 2;
+    const fy = FRUIT_ROW * TILE_SIZE + TILE_SIZE / 2;
+    for (let i = 0; i < 60; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 150;
+        const hue = 40 + Math.random() * 30;
+        particles.push({
+            x: fx, y: fy,
+            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+            life: 1 + Math.random() * 2.5,
+            color: `hsl(${hue}, 100%, ${55 + Math.random() * 25}%)`,
+            size: 3 + Math.random() * 5, gravity: true,
+        });
+    }
+}
+
+// ======================== 输入 ========================
+const keys = {};
+const keyPressed = {};
+let touchMove = { active: false, sx: 0, sy: 0, cx: 0, cy: 0 };
+let touchAttackBtn = false;
+
+document.addEventListener('keydown', e => {
+    if (!keys[e.key]) keyPressed[e.key] = true;
+    keys[e.key] = true;
+    if (e.key === ' ' || e.key === 'Space') e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// 触屏
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    isTouchDevice = true;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvasW / rect.width, sy = canvasH / rect.height;
+    for (const t of e.changedTouches) {
+        const tx = (t.clientX - rect.left) * sx;
+        const ty = (t.clientY - rect.top) * sy;
+        if (tx > canvasW / 2 + 60) {
+            touchAttackBtn = true;
+        } else {
+            touchMove.active = true;
+            touchMove.sx = tx; touchMove.sy = ty;
+            touchMove.cx = tx; touchMove.cy = ty;
+        }
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!touchMove.active) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvasW / rect.width, sy = canvasH / rect.height;
+    const t = e.touches[0];
+    touchMove.cx = (t.clientX - rect.left) * sx;
+    touchMove.cy = (t.clientY - rect.top) * sy;
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    touchMove.active = false;
+});
+
+// 鼠标/触屏点击事件（用于菜单 + 桌面端攻击）
+canvas.addEventListener('click', e => {
+    if (gameState === STATE_TITLE) { startGame(); return; }
+    if (gameState === STATE_GAMEOVER || gameState === STATE_WIN) {
+        for (const k in keys) delete keys[k];
+        for (const k in keyPressed) delete keyPressed[k];
+        gameState = STATE_TITLE;
+        return;
+    }
+    if (gameState === STATE_PLAYING && !isTouchDevice) {
+        playerAttack();
+    }
+});
+
+document.addEventListener('keydown', function startHandler(e) {
+    if (gameState === STATE_TITLE && (e.key === ' ' || e.key === 'Space' || e.key === 'Enter')) {
+        startGame();
+    }
+});
+
+// ======================== 碰撞 ========================
+function isSolid(row, col) {
+    if (row < 0 || row >= MAP_ROWS || col < 0 || col >= MAP_COLS) return true;
+    return map[row][col] === T_WALL || map[row][col] === T_VINE_WALL;
+}
+
+function canMoveTo(x, y) {
+    const r = PLAYER_RADIUS - 2;
+    const checks = [
+        [Math.floor((y - r) / TILE_SIZE), Math.floor((x - r) / TILE_SIZE)],
+        [Math.floor((y - r) / TILE_SIZE), Math.floor((x + r) / TILE_SIZE)],
+        [Math.floor((y + r) / TILE_SIZE), Math.floor((x - r) / TILE_SIZE)],
+        [Math.floor((y + r) / TILE_SIZE), Math.floor((x + r) / TILE_SIZE)],
+    ];
+    for (const [rr, cc] of checks) {
+        if (isSolid(rr, cc)) return false;
+    }
+    return true;
+}
+
+// ======================== 相机 ========================
+const camera = { x: 0, y: 0 };
+
+function updateCamera() {
+    const targetX = player.x - canvasW / 2;
+    const targetY = player.y - canvasH / 2;
+    camera.x += (targetX - camera.x) * 0.1;
+    camera.y += (targetY - camera.y) * 0.1;
+    camera.x = Math.max(0, Math.min(WORLD_W - canvasW, camera.x));
+    camera.y = Math.max(0, Math.min(WORLD_H - canvasH, camera.y));
+}
+
+// ======================== 游戏逻辑 ========================
+function startGame() {
+    gameState = STATE_PLAYING;
+    gameTime = 0;
+    for (const k in keys) delete keys[k];
+    for (const k in keyPressed) delete keyPressed[k];
+    resetPlayer();
+    tendrils = [];
+    vineParticles = [];
+    particles = [];
+    shakeDuration = 0;
+    shakeIntensity = 0;
+    camera.x = player.x - canvasW / 2;
+    camera.y = player.y - canvasH / 2;
+    for (const s of vineSpawners) s.timer = 2 + Math.random() * 2.5;
+}
+
+function updatePlayer(dt) {
+    let dx = 0, dy = 0;
+
+    // 键盘
+    if (keys['ArrowUp'] || keys['w'] || keys['W']) dy = -1;
+    if (keys['ArrowDown'] || keys['s'] || keys['S']) dy = 1;
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1;
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1;
+
+    // 触屏摇杆
+    if (touchMove.active) {
+        const rawDx = touchMove.cx - touchMove.sx;
+        const rawDy = touchMove.cy - touchMove.sy;
+        const dist = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+        if (dist > 15) {
+            const clamp = Math.min(dist, 70);
+            dx = (rawDx / dist) * (clamp / 70);
+            dy = (rawDy / dist) * (clamp / 70);
+        }
+    }
+
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len > 1) { dx /= len; dy /= len; }
+
+    player.isMoving = len > 0.1;
+
+    if (player.isMoving) {
+        if (Math.abs(dx) > Math.abs(dy)) player.dir = dx > 0 ? 1 : -1;
+        else player.dir = dy > 0 ? 2 : 0;
+
+        // 脚步声
+        player.stepTimer += dt;
+        if (player.stepTimer > 0.3) {
+            player.stepTimer = 0;
+            playStep();
+        }
+    }
+
+    // 移动 + 碰撞
+    const speed = PLAYER_SPEED * dt;
+    const newX = player.x + dx * speed;
+    const newY = player.y + dy * speed;
+
+    if (dx !== 0 && canMoveTo(newX, player.y)) player.x = newX;
+    if (dy !== 0 && canMoveTo(player.x, newY)) player.y = newY;
+
+    // 对角卡墙时的滑动
+    if (dx !== 0 && dy !== 0) {
+        if (!canMoveTo(newX, player.y) && canMoveTo(player.x, newY)) player.y = newY;
+        else if (canMoveTo(newX, player.y) && !canMoveTo(player.x, newY)) player.x = newX;
+    }
+
+    // 攻击
+    if (keyPressed[' '] || keyPressed['Space'] || touchAttackBtn) {
+        playerAttack();
+    }
+    touchAttackBtn = false;
+
+    if (player.attacking) {
+        player.attackTimer -= dt;
+        if (player.attackTimer <= 0) {
+            player.attacking = false;
+            emitAttackParticles();
+        }
+    }
+    if (player.attackCooldown > 0) player.attackCooldown -= dt;
+    if (player.invincible > 0) player.invincible -= dt;
+
+    // 藤蔓碰撞
+    if (checkTendrilCollision()) {
+        player.hp--;
+        player.invincible = INVINCIBLE_TIME;
+        playHit();
+        emitHitParticles();
+        triggerShake(0.15, 5);
+        if (player.hp <= 0) {
+            gameState = STATE_GAMEOVER;
+            playLose();
+        }
+    }
+}
+
+function updateVines(dt) {
+    for (const s of vineSpawners) {
+        s.timer -= dt;
+        if (s.timer <= 0) {
+            const elapsed = gameTime / 60;
+            const interval = Math.max(VINE_MIN_INTERVAL, VINE_INTERVAL_BASE - elapsed * 0.35);
+            s.timer = interval + Math.random() * interval * 0.5;
+            createTendril(s);
+        }
+    }
+}
+
+function checkWinCondition() {
+    const fx = FRUIT_COL * TILE_SIZE + TILE_SIZE / 2;
+    const fy = FRUIT_ROW * TILE_SIZE + TILE_SIZE / 2;
+    const dx = player.x - fx, dy = player.y - fy;
+    if (dx * dx + dy * dy < (PLAYER_RADIUS + 14) * (PLAYER_RADIUS + 14)) {
+        gameState = STATE_WIN;
+        playWin();
+        playPickup();
+        emitWinParticles();
+        triggerShake(0.3, 8);
+    }
+}
+
+// ======================== 渲染 ========================
+function drawTile(r, c, screenX, screenY) {
+    const t = map[r][c];
+    const seed = r * 17 + c * 31;
+
+    if (t === T_GRASS) {
+        // 草地 — 深浅错落的绿色
+        const shade = ((r * 7 + c * 13) % 7) * 2 - 8;
+        const gBase = 80 + shade;
+        ctx.fillStyle = `rgb(35, ${Math.max(60, Math.min(110, gBase))}, 22)`;
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+
+        // 随机草丛点缀
+        if (seed % 5 === 0 || seed % 7 === 0) {
+            ctx.fillStyle = 'rgba(50, 100, 40, 0.35)';
+            const bx = screenX + ((seed * 3) % (TILE_SIZE - 6)) + 3;
+            const by = screenY + ((seed * 7) % (TILE_SIZE - 6)) + 3;
+            ctx.fillRect(bx, by, 2, 5);
+            ctx.fillRect(bx + 3, by + 1, 2, 4);
+            ctx.fillRect(bx - 2, by + 2, 2, 3);
+        }
+        if (seed % 11 === 0) {
+            ctx.fillStyle = 'rgba(60, 120, 45, 0.25)';
+            ctx.beginPath();
+            ctx.arc(screenX + (seed % TILE_SIZE), screenY + ((seed * 5) % TILE_SIZE), 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    else if (t === T_PATH) {
+        // 路径 — 土色/砖色
+        const shade = ((r * 11 + c * 7) % 5) * 3 - 6;
+        const rBase = 130 + shade;
+        ctx.fillStyle = `rgb(${Math.max(100, Math.min(165, rBase))}, ${Math.max(85, Math.min(125, 110 + shade))}, ${Math.max(55, Math.min(85, 65 + shade))})`;
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        // 砖缝纹理
+        ctx.strokeStyle = 'rgba(90, 70, 40, 0.2)';
+        ctx.lineWidth = 1;
+        if ((r + c) % 3 === 0) {
+            ctx.beginPath();
+            ctx.moveTo(screenX, screenY + TILE_SIZE / 2);
+            ctx.lineTo(screenX + TILE_SIZE, screenY + TILE_SIZE / 2);
+            ctx.stroke();
+        }
+        // 小块石头
+        if (seed % 13 === 0) {
+            ctx.fillStyle = 'rgba(100, 80, 55, 0.25)';
+            const px = screenX + ((seed * 3) % (TILE_SIZE - 6)) + 3;
+            const py = screenY + ((seed * 7) % (TILE_SIZE - 6)) + 3;
+            ctx.beginPath();
+            ctx.ellipse(px, py, 3, 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    else if (t === T_WALL) {
+        // 石墙
+        ctx.fillStyle = '#5a3e2b';
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.strokeStyle = '#4a2e1b';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+
+        // 砖纹
+        ctx.strokeStyle = 'rgba(70, 40, 25, 0.5)';
+        ctx.lineWidth = 1;
+        const midX = screenX + TILE_SIZE / 2;
+        const midY = screenY + TILE_SIZE / 2;
+        if ((r + c) % 2 === 0) {
+            ctx.beginPath(); ctx.moveTo(midX, screenY); ctx.lineTo(midX, screenY + TILE_SIZE); ctx.stroke();
+        } else {
+            ctx.beginPath(); ctx.moveTo(screenX, midY); ctx.lineTo(screenX + TILE_SIZE, midY); ctx.stroke();
+        }
+
+        // 顶部装饰
+        ctx.fillStyle = 'rgba(80, 55, 35, 0.4)';
+        ctx.fillRect(screenX, screenY, TILE_SIZE, 2);
+        ctx.fillStyle = 'rgba(45, 30, 20, 0.3)';
+        ctx.fillRect(screenX, screenY + TILE_SIZE - 2, TILE_SIZE, 2);
+    }
+    else if (t === T_VINE_WALL) {
+        // 藤蔓墙 — 墙+藤蔓覆盖
+        ctx.fillStyle = '#4a3522';
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.strokeStyle = '#3a2515';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+
+        // 藤蔓覆盖层
+        ctx.fillStyle = 'rgba(22, 101, 52, 0.5)';
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+
+        // 藤蔓茎
+        ctx.strokeStyle = '#166534';
+        ctx.lineWidth = 2.5;
+        const vineSeed = seed * 3;
+        for (let i = 0; i < 3; i++) {
+            const vx = screenX + 8 + (vineSeed * (i + 1) % (TILE_SIZE - 16));
+            ctx.beginPath();
+            ctx.moveTo(vx, screenY + TILE_SIZE);
+            let cy = screenY + TILE_SIZE;
+            for (let step = 0; step < 4; step++) {
+                cy -= TILE_SIZE / 4;
+                const cx = vx + Math.sin(vineSeed + step * 1.5 + i * 2) * 10;
+                ctx.lineTo(cx, cy);
+            }
+            ctx.stroke();
+        }
+
+        // 叶子
+        ctx.fillStyle = '#22c55e';
+        for (let i = 0; i < 4; i++) {
+            const lx = screenX + (vineSeed * (i + 1) * 7 % (TILE_SIZE - 10)) + 5;
+            const ly = screenY + 6 + i * (TILE_SIZE / 5);
+            ctx.beginPath();
+            ctx.ellipse(lx, ly, 5, 2.5, Math.sin(vineSeed + i) * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.fillStyle = '#16a34a';
+        for (let i = 0; i < 3; i++) {
+            const lx = screenX + (vineSeed * (i + 2) * 11 % (TILE_SIZE - 10)) + 5;
+            const ly = screenY + 14 + i * (TILE_SIZE / 4);
+            ctx.beginPath();
+            ctx.ellipse(lx + 3, ly, 4, 2, Math.cos(vineSeed + i) * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 发光节点（表明这是攻击性藤蔓）
+        const glow = 0.4 + Math.sin(gameTime * 2 + seed) * 0.3;
+        ctx.fillStyle = `rgba(74, 222, 128, ${glow * 0.25})`;
+        ctx.beginPath();
+        ctx.arc(screenX + TILE_SIZE / 2, screenY + TILE_SIZE / 2, TILE_SIZE * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function drawMap() {
+    const startCol = Math.max(0, Math.floor(camera.x / TILE_SIZE));
+    const startRow = Math.max(0, Math.floor(camera.y / TILE_SIZE));
+    const endCol = Math.min(MAP_COLS - 1, Math.ceil((camera.x + canvasW) / TILE_SIZE));
+    const endRow = Math.min(MAP_ROWS - 1, Math.ceil((camera.y + canvasH) / TILE_SIZE));
+
+    for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+            drawTile(r, c, c * TILE_SIZE - camera.x, r * TILE_SIZE - camera.y);
+        }
+    }
+}
+
+function drawTendrils() {
+    for (const t of tendrils) {
+        const sx = t.x - camera.x, sy = t.y - camera.y;
+        if (sx < -30 || sx > canvasW + 30 || sy < -30 || sy > canvasH + 30) continue;
+
+        // 轨迹
+        for (const tr of t.trail) {
+            const alpha = tr.life * 0.45;
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#86efac';
+            ctx.beginPath();
+            ctx.arc(tr.x - camera.x, tr.y - camera.y, t.radius * tr.life * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        // 触手本体
+        const agePulse = 0.8 + Math.sin(t.age * 8) * 0.2;
+        const rad = (t.radius + 2) * agePulse;
+        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad + 2);
+        grad.addColorStop(0, '#a3e635');
+        grad.addColorStop(0.3, '#22c55e');
+        grad.addColorStop(0.7, '#15803d');
+        grad.addColorStop(1, '#14532d');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad + 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 高光
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.beginPath();
+        ctx.arc(sx - rad * 0.2, sy - rad * 0.2, rad * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 尖端尖刺
+        for (let a = 0; a < 4; a++) {
+            const angle = a * Math.PI / 2 + t.age * 4 + t.wobble * 0.3;
+            const spikeLen = 3 + Math.sin(t.age * 5 + a * 2) * 2;
+            const sx2 = sx + Math.cos(angle) * (rad + 1);
+            const sy2 = sy + Math.sin(angle) * (rad + 1);
+            const ex = sx + Math.cos(angle) * (rad + spikeLen + 2);
+            const ey = sy + Math.sin(angle) * (rad + spikeLen + 2);
+            ctx.strokeStyle = '#15803d';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(sx2, sy2);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+        }
+
+        // 与墙壁的连接线（从起点到触手位置）
+        const ox = t.originX - camera.x;
+        const oy = t.originY - camera.y;
+        const dist = Math.sqrt((t.x - t.originX) ** 2 + (t.y - t.originY) ** 2);
+        if (dist > 10) {
+            ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([3, 4]);
+            ctx.beginPath();
+            ctx.moveTo(ox, oy);
+            ctx.lineTo(sx, sy);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    }
+}
+
+function drawPlayer() {
+    const px = player.x - camera.x;
+    const py = player.y - camera.y;
+
+    // 无敌闪烁
+    if (player.invincible > 0 && Math.floor(player.invincible * 10) % 2 === 0) {
+        ctx.globalAlpha = 0.4;
+    }
+
+    // 影子
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(px + 1, py + 6, 12, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 身体
+    ctx.fillStyle = '#3b82f6';
+    ctx.beginPath();
+    ctx.arc(px, py, PLAYER_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 身体高光
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath();
+    ctx.arc(px - 3, py - 3, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 衣服条纹
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px - 7, py + 3); ctx.lineTo(px + 7, py + 3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(px - 6, py + 6); ctx.lineTo(px + 6, py + 6); ctx.stroke();
+
+    // 帽子
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(px, py - 9, 7, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.fill();
+    ctx.fillRect(px - 9, py - 10, 18, 3);
+    ctx.fillStyle = '#d97706';
+    ctx.beginPath();
+    ctx.arc(px, py - 9, 7, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.fill();
+
+    // 眼睛 — 根据方向
+    const eox = player.dir === 1 ? 2.5 : player.dir === -1 ? -2.5 : 0;
+    const eoy = player.dir === 2 ? 2.5 : player.dir === 0 ? -2.5 : 0;
+
+    // 眼睛白色
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(px - 4 + eox * 0.5, py - 2 + eoy * 0.5, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px + 4 + eox * 0.5, py - 2 + eoy * 0.5, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 瞳孔
+    ctx.fillStyle = '#1e3a5f';
+    ctx.beginPath();
+    ctx.arc(px - 3 + eox, py - 1.5 + eoy, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px + 5 + eox, py - 1.5 + eoy, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 眼睛高光
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(px - 2 + eox, py - 2.5 + eoy, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px + 6 + eox, py - 2.5 + eoy, 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 嘴
+    ctx.strokeStyle = '#1e3a5f';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(px + eox * 0.3, py + 2.5 + eoy * 0.3, 3, 0, Math.PI);
+    ctx.stroke();
+
+    // 腿（带有行走动画）
+    if (player.isMoving) {
+        const legSwing = Math.sin(gameTime * 12) * 4;
+        ctx.fillStyle = '#2563eb';
+        ctx.fillRect(px - 6, py + 9 + legSwing * 0.3, 4, 6);
+        ctx.fillRect(px + 2, py + 9 - legSwing * 0.3, 4, 6);
+    } else {
+        ctx.fillStyle = '#2563eb';
+        ctx.fillRect(px - 6, py + 9, 4, 5);
+        ctx.fillRect(px + 2, py + 9, 4, 5);
+    }
+
+    ctx.globalAlpha = 1;
+}
+
+function drawAttack() {
+    if (!player.attacking) return;
+    const px = player.x - camera.x;
+    const py = player.y - camera.y;
+    const progress = 1 - player.attackTimer / ATTACK_DURATION;
+    const angle = progress * Math.PI * 2;
+
+    // 攻击环
+    ctx.strokeStyle = `rgba(253, 224, 71, ${1 - progress * 0.5})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(px, py, ATTACK_RADIUS * (0.3 + progress * 0.7), -angle * 0.5, angle * 0.5);
+    ctx.stroke();
+
+    // 半透明圈
+    ctx.fillStyle = `rgba(253, 224, 71, ${(1 - progress) * 0.1})`;
+    ctx.beginPath();
+    ctx.arc(px, py, ATTACK_RADIUS * (0.3 + progress * 0.7), 0, Math.PI * 2);
+    ctx.fill();
+
+    // 闪光粒子
+    const flashAngle = progress * Math.PI * 4;
+    for (let i = 0; i < 5; i++) {
+        const a = flashAngle + i * Math.PI / 2.5;
+        const d = 8 + progress * 30;
+        ctx.fillStyle = `rgba(255, 255, 200, ${(1 - progress) * 0.6})`;
+        ctx.beginPath();
+        ctx.arc(px + Math.cos(a) * d, py + Math.sin(a) * d, 2 + progress * 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function drawFruit() {
+    const fx = FRUIT_COL * TILE_SIZE + TILE_SIZE / 2 - camera.x;
+    const fy = FRUIT_ROW * TILE_SIZE + TILE_SIZE / 2 - camera.y;
+    const pulse = 1 + Math.sin(gameTime * 3) * 0.08;
+
+    // 大光晕
+    const glowGrad = ctx.createRadialGradient(fx, fy, 0, fx, fy, 38 * pulse);
+    glowGrad.addColorStop(0, 'rgba(251, 191, 36, 0.3)');
+    glowGrad.addColorStop(0.4, 'rgba(251, 191, 36, 0.1)');
+    glowGrad.addColorStop(1, 'rgba(251, 191, 36, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(fx, fy, 38 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 果实本体
+    const fGrad = ctx.createRadialGradient(fx - 3, fy - 4, 0, fx, fy, 14 * pulse);
+    fGrad.addColorStop(0, '#fef08a');
+    fGrad.addColorStop(0.35, '#eab308');
+    fGrad.addColorStop(1, '#a16207');
+    ctx.fillStyle = fGrad;
+    ctx.beginPath();
+    ctx.arc(fx, fy, 13 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 高光
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    ctx.arc(fx - 4, fy - 5, 4.5 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath();
+    ctx.arc(fx - 7, fy - 7, 2.5 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 叶子
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath();
+    ctx.ellipse(fx + 3, fy - 15, 6, 3.5, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#16a34a';
+    ctx.beginPath();
+    ctx.ellipse(fx + 8, fy - 13, 5, 3, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#16a34a';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy - 13); ctx.lineTo(fx + 1, fy - 18); ctx.stroke();
+
+    // 漂浮粒子
+    for (let i = 0; i < 4; i++) {
+        const a = gameTime * 2 + i * Math.PI / 2;
+        const d = 20 + Math.sin(gameTime * 1.5 + i * 2) * 5;
+        ctx.fillStyle = `rgba(253, 224, 71, ${0.35 + Math.sin(gameTime + i) * 0.2})`;
+        ctx.beginPath();
+        ctx.arc(fx + Math.cos(a) * d, fy + Math.sin(a) * d, 2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function drawParticles() {
+    for (const p of vineParticles) {
+        ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+        ctx.fillStyle = p.color;
+        const s = p.size * (p.life / p.maxLife);
+        ctx.fillRect(p.x - camera.x - s / 2, p.y - camera.y - s / 2, s, s);
+    }
+    ctx.globalAlpha = 1;
+    for (const p of particles) {
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.fillStyle = p.color || '#fff';
+        const s = p.size || 3;
+        ctx.fillRect(p.x - camera.x - s / 2, p.y - camera.y - s / 2, s, s);
+    }
+    ctx.globalAlpha = 1;
+}
+
+function drawUI() {
+    // HP 心形
+    const hs = 20;
+    for (let i = 0; i < player.maxHp; i++) {
+        const hx = 16 + i * (hs + 5);
+        ctx.font = `${hs}px sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        if (i < player.hp) {
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText('❤', hx, 14);
+        } else {
+            ctx.fillStyle = '#4a4a4a';
+            ctx.fillText('❤', hx, 14);
+        }
+    }
+
+    // 藤蔓计数器
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.roundRect(14, 40, 120, 22, 4);
+    ctx.fill();
+    ctx.fillStyle = '#86efac';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`🌿 ${tendrils.length}/${MAX_TENDRILS}`, 20, 44);
+
+    // 操作提示（桌面端）
+    if (!isTouchDevice) {
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.beginPath();
+        ctx.roundRect(canvasW - 225, 10, 215, 55, 4);
+        ctx.fill();
+        ctx.fillStyle = '#d1d5db';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('WASD / 方向键 移动', canvasW - 16, 18);
+        ctx.fillText('空格 攻击藤蔓', canvasW - 16, 38);
+    }
+
+    // 移动端摇杆和攻击按钮
+    if (isTouchDevice && touchMove.active) {
+        const jx = 80, jy = canvasH - 80;
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.beginPath();
+        ctx.arc(jx, jy, 55, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(jx, jy, 55, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const rawDx = touchMove.cx - touchMove.sx;
+        const rawDy = touchMove.cy - touchMove.sy;
+        const d = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+        const clamped = Math.min(d, 70);
+        const nxd = d > 0 ? rawDx / d : 0;
+        const nyd = d > 0 ? rawDy / d : 0;
+        const hx = jx + nxd * clamped * 0.55;
+        const hy = jy + nyd * clamped * 0.55;
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.beginPath();
+        ctx.arc(hx, hy, 22, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 攻击按钮
+        const bx = canvasW - 80, by = canvasH - 80;
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
+        ctx.beginPath();
+        ctx.arc(bx, by, 45, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(bx, by, 45, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#fca5a5';
+        ctx.font = 'bold 18px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('砍', bx, by);
+    }
+
+    // 小地图
+    const mmW = 90, mmH = (MAP_ROWS / MAP_COLS) * mmW;
+    const mmX = canvasW - mmW - 12, mmY = 70;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.roundRect(mmX - 3, mmY - 3, mmW + 6, mmH + 6, 3);
+    ctx.fill();
+    for (let r = 0; r < MAP_ROWS; r++) {
+        for (let c = 0; c < MAP_COLS; c++) {
+            const t = map[r][c];
+            if (t === T_WALL) {
+                ctx.fillStyle = '#4a2e1b';
+            } else if (t === T_VINE_WALL) {
+                ctx.fillStyle = '#166534';
+            } else if (t === T_PATH) {
+                ctx.fillStyle = '#8B7355';
+            } else {
+                continue;
+            }
+            ctx.fillRect(mmX + c * mmW / MAP_COLS, mmY + r * mmH / MAP_ROWS, mmW / MAP_COLS + 0.5, mmH / MAP_ROWS + 0.5);
+        }
+    }
+    // 玩家位置
+    ctx.fillStyle = '#3b82f6';
+    ctx.beginPath();
+    ctx.arc(mmX + (player.x / WORLD_W) * mmW, mmY + (player.y / WORLD_H) * mmH, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // 果实位置
+    ctx.fillStyle = '#eab308';
+    ctx.beginPath();
+    ctx.arc(mmX + (FRUIT_COL * TILE_SIZE + TILE_SIZE / 2) / WORLD_W * mmW, mmY + (FRUIT_ROW * TILE_SIZE + TILE_SIZE / 2) / WORLD_H * mmH, 2, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+// roundRect polyfill
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+        if (r > w / 2) r = w / 2;
+        if (r > h / 2) r = h / 2;
+        this.moveTo(x + r, y);
+        this.lineTo(x + w - r, y);
+        this.quadraticCurveTo(x + w, y, x + w, y + r);
+        this.lineTo(x + w, y + h - r);
+        this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        this.lineTo(x + r, y + h);
+        this.quadraticCurveTo(x, y + h, x, y + h - r);
+        this.lineTo(x, y + r);
+        this.quadraticCurveTo(x, y, x + r, y);
+        this.closePath();
+        return this;
+    };
+}
+
+// ======================== 屏幕 ========================
+function drawTitle() {
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.fillStyle = '#166534';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('~ 公园探险 ~', canvasW / 2, canvasH / 2 - 105);
+
+    ctx.fillStyle = '#22c55e';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText('藤蔓大战', canvasW / 2, canvasH / 2 - 50);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText('藤蔓大战', canvasW / 2 + 2, canvasH / 2 - 48);
+
+    ctx.fillStyle = '#86efac';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('穿越公园，躲避藤蔓，夺取胜利果实！', canvasW / 2, canvasH / 2 + 10);
+
+    const pulse = 0.6 + Math.sin(gameTime * 3) * 0.4;
+    ctx.fillStyle = `rgba(253, 224, 71, ${pulse})`;
+    ctx.font = '17px sans-serif';
+    ctx.fillText('点击 / 按任意键 开始', canvasW / 2, canvasH / 2 + 65);
+
+    ctx.fillStyle = 'rgba(156, 163, 175, 0.8)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('WASD / 方向键 移动  |  空格 攻击  |  抵达金色果实即为胜利', canvasW / 2, canvasH / 2 + 115);
+
+    // 底部装饰藤蔓
+    for (let i = 0; i < 8; i++) {
+        const x = canvasW * (0.06 + i * 0.12);
+        const y = canvasH - 30;
+        ctx.strokeStyle = '#166534';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        for (let t = 0; t <= 1; t += 0.03) {
+            ctx.lineTo(x + Math.sin(t * 8 + i * 1.3) * 16, y - t * 75);
+        }
+        ctx.stroke();
+        for (let j = 0; j < 4; j++) {
+            const lt = 0.15 + j * 0.25;
+            const lx = x + Math.sin(lt * 8 + i * 1.3) * 16;
+            const ly = y - lt * 75;
+            ctx.fillStyle = '#22c55e';
+            ctx.beginPath();
+            ctx.ellipse(lx + 5, ly, 4, 2.5, Math.sin(i + j) * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#16a34a';
+            ctx.beginPath();
+            ctx.ellipse(lx - 4, ly, 3.5, 2, Math.cos(i + j) * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+}
+
+function drawGameOver() {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.fillStyle = '#ef4444';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.fillText('被藤蔓击败了...', canvasW / 2, canvasH / 2 - 35);
+
+    ctx.fillStyle = '#d1d5db';
+    ctx.font = '17px sans-serif';
+    ctx.fillText('藤蔓太过茂盛，未能穿越公园', canvasW / 2, canvasH / 2 + 25);
+
+    const pulse = 0.5 + Math.sin(gameTime * 2.5) * 0.5;
+    ctx.fillStyle = `rgba(156, 163, 175, ${pulse})`;
+    ctx.font = '15px sans-serif';
+    ctx.fillText('点击重新开始', canvasW / 2, canvasH / 2 + 75);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+}
+
+function drawWin() {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const glow = ctx.createRadialGradient(canvasW / 2, canvasH / 2 - 10, 0, canvasW / 2, canvasH / 2 - 10, 200);
+    glow.addColorStop(0, 'rgba(253, 224, 71, 0.12)');
+    glow.addColorStop(1, 'rgba(253, 224, 71, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(canvasW / 2, canvasH / 2 - 10, 200, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#fde047';
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('胜 利 ！', canvasW / 2, canvasH / 2 - 45);
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '19px sans-serif';
+    ctx.fillText('你成功穿越公园，夺得了胜利果实！', canvasW / 2, canvasH / 2 + 15);
+
+    ctx.font = '40px sans-serif';
+    ctx.fillText('🏆 ✨', canvasW / 2, canvasH / 2 + 80);
+
+    const pulse = 0.5 + Math.sin(gameTime * 2) * 0.5;
+    ctx.fillStyle = `rgba(156, 163, 175, ${pulse})`;
+    ctx.font = '15px sans-serif';
+    ctx.fillText('点击继续', canvasW / 2, canvasH / 2 + 145);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+}
+
+// ======================== 主循环 ========================
+let lastTime = 0;
+
+function gameLoop(timestamp) {
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+    lastTime = timestamp;
+    gameTime += dt;
+
+    // 屏幕震动
+    let shakeX = 0, shakeY = 0;
+    if (shakeDuration > 0) {
+        shakeX = (Math.random() - 0.5) * shakeIntensity * 2;
+        shakeY = (Math.random() - 0.5) * shakeIntensity * 2;
+        shakeIntensity *= 0.92;
+    }
+
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    if (gameState === STATE_TITLE) {
+        drawMap();
+        drawFruit();
+        drawTitle();
+
+        for (const k in keys) {
+            if (keys[k]) { startGame(); break; }
+        }
+    } else if (gameState === STATE_PLAYING) {
+        updatePlayer(dt);
+        updateCamera();
+        updateVines(dt);
+        updateTendrils(dt);
+        updateParticles(dt);
+        checkWinCondition();
+
+        drawMap();
+        drawFruit();
+        drawTendrils();
+        drawAttack();
+        drawPlayer();
+        drawParticles();
+        drawUI();
+    } else if (gameState === STATE_GAMEOVER) {
+        updateParticles(dt);
+        updateTendrils(dt);
+        for (const t of tendrils) { t.vx *= 0.97; t.vy *= 0.97; }
+
+        drawMap();
+        drawFruit();
+        drawTendrils();
+        drawPlayer();
+        drawParticles();
+        drawUI();
+        drawGameOver();
+    } else if (gameState === STATE_WIN) {
+        updateParticles(dt);
+        if (particles.length < 40 && Math.random() < 0.04) {
+            emitWinParticles();
+        }
+
+        drawMap();
+        drawFruit();
+        drawTendrils();
+        drawPlayer();
+        drawParticles();
+        drawUI();
+        drawWin();
+    }
+
+    ctx.restore();
+
+    // 清空帧按键
+    for (const k in keyPressed) keyPressed[k] = false;
+
+    requestAnimationFrame(gameLoop);
+}
+
+// ======================== 启动 ========================
+requestAnimationFrame(t => {
+    lastTime = t;
+    gameLoop(t);
+});
+</script>
+</body>
+</html>

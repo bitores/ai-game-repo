@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>色彩推推乐</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0d0d1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 40px rgba(78, 204, 163, 0.15);
+            background: #111128;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+
+        // --- 响应式尺寸 ---
+        const W = 500,
+            H = 580;
+        canvas.width = W;
+        canvas.height = H;
+
+        // --- 游戏配置 ---
+        const GRID = 5;
+        const CELL_SIZE = 78;
+        const GAP = 6;
+        const BOARD_SIZE = GRID * (CELL_SIZE + GAP) + GAP;
+        const OFFSET_X = (W - BOARD_SIZE) / 2;
+        const OFFSET_Y = 85;
+
+        const COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#c084fc'];
+        const COLOR_NAMES = ['红', '蓝', '黄', '紫'];
+
+        // --- 游戏状态 ---
+        let grid = [];
+        let playerR = 2,
+            playerC = 2;
+        let score = 0;
+        let targetScore = 10;
+        let moves = 0;
+        let level = 1;
+        let gameWon = false;
+        let gameOver = false;
+        let gameStarted = false;
+        let timer = 0;
+
+        // 动画
+        let animations = [];
+        let showingWin = false;
+        let showingLose = false;
+
+        // 防止连锁处理中的竞态
+        let processingMatches = false;
+
+        // 方向
+        const DIRS = {
+            up: [-1, 0],
+            down: [1, 0],
+            left: [0, -1],
+            right: [0, 1]
+        };
+
+        // --- 网格操作 ---
+        function initLevel() {
+            grid = [];
+            for (let r = 0; r < GRID; r++) {
+                grid[r] = [];
+                for (let c = 0; c < GRID; c++) {
+                    grid[r][c] = { type: 'empty' };
+                }
+            }
+
+            // 放置玩家
+            playerR = 2;
+            playerC = 2;
+            grid[playerR][playerC] = { type: 'player' };
+
+            // 放置方块
+            let placed = 0;
+            const totalBlocks = 14 + Math.min(level, 4);
+            while (placed < totalBlocks) {
+                const r = Math.floor(Math.random() * GRID);
+                const c = Math.floor(Math.random() * GRID);
+                if (grid[r][c].type === 'empty') {
+                    grid[r][c] = { type: 'block', color: Math.floor(Math.random() * COLORS.length) };
+                    placed++;
+                }
+            }
+
+            // 确保至少有几组相邻同色方块（让开局有消除可能）
+            // 但避免紧贴玩家（防止开局自动连锁）
+            for (let attempt = 0; attempt < 5; attempt++) {
+                let pairCreated = false;
+                for (let r = 0; r < GRID; r++) {
+                    for (let c = 0; c < GRID; c++) {
+                        if (grid[r][c].type !== 'block') continue;
+                        // 跳过紧贴玩家的格子
+                        if (Math.abs(r - playerR) + Math.abs(c - playerC) <= 2) continue;
+                        // 检查是否已经有同色邻居
+                        let hasNeighbor = false;
+                        for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+                            const nr = r + dr, nc = c + dc;
+                            if (nr < 0 || nr >= GRID || nc < 0 || nc >= GRID) continue;
+                            if (grid[nr][nc].type === 'block' && grid[nr][nc].color === grid[r][c].color) {
+                                hasNeighbor = true;
+                                break;
+                            }
+                        }
+                        if (hasNeighbor) continue;
+                        // 尝试在随机方向创建一个同色邻居
+                        const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+                        // 随机打乱方向
+                        for (let i = dirs.length - 1; i > 0; i--) {
+                            const j = Math.floor(Math.random() * (i + 1));
+                            [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+                        }
+                        for (const [dr, dc] of dirs) {
+                            const nr = r + dr, nc = c + dc;
+                            if (nr < 0 || nr >= GRID || nc < 0 || nc >= GRID) continue;
+                            if (grid[nr][nc].type === 'empty') {
+                                grid[nr][nc] = { type: 'block', color: grid[r][c].color };
+                                pairCreated = true;
+                                break;
+                            }
+                        }
+                        if (pairCreated) break;
+                    }
+                    if (pairCreated) break;
+                }
+                if (!pairCreated) break; // 没有更多空格可用了
+            }
+
+            score = 0;
+            moves = 0;
+            gameWon = false;
+            gameOver = false;
+            showingWin = false;
+            showingLose = false;
+            gameStarted = false;
+            timer = 0;
+            animations = [];
+
+            targetScore = 8 + level * 2;
+            if (targetScore > 30) targetScore = 30;
+        }
+
+        // --- 玩家移动 ---
+        function movePlayer(dr, dc) {
+            if (gameWon || gameOver) return;
+            if (processingMatches) return; // 连锁处理中，忽略输入
+            const nr = playerR + dr;
+            const nc = playerC + dc;
+            if (nr < 0 || nr >= GRID || nc < 0 || nc >= GRID) return;
+
+            const target = grid[nr][nc];
+
+            if (target.type === 'empty') {
+                // 移动
+                grid[playerR][playerC] = { type: 'empty' };
+                grid[nr][nc] = { type: 'player' };
+                playerR = nr;
+                playerC = nc;
+                moves++;
+                if (!gameStarted) gameStarted = true;
+                return;
+            }
+
+            if (target.type === 'block') {
+                // 尝试推动
+                const br = nr + dr;
+                const bc = nc + dc;
+                if (br < 0 || br >= GRID || bc < 0 || bc >= GRID) return;
+                if (grid[br][bc].type !== 'empty') return;
+
+                // 推动
+                grid[br][bc] = { type: 'block', color: target.color };
+                grid[nr][nc] = { type: 'player' };
+                grid[playerR][playerC] = { type: 'empty' };
+                playerR = nr;
+                playerC = nc;
+                moves++;
+                if (!gameStarted) gameStarted = true;
+
+                // 检查消除（含连锁）
+                setTimeout(() => {
+                    processMatches();
+                }, 80);
+            }
+        }
+
+        // --- 消除检测 ---
+        function processMatches() {
+            if (processingMatches) return;
+            processingMatches = true;
+            let anyEliminated = false;
+            while (true) {
+                const matches = findMatches();
+                if (matches.length === 0) break;
+
+                // 消除
+                const eliminated = new Set();
+                for (const group of matches) {
+                    if (group.length >= 2) {
+                        for (const [r, c] of group) {
+                            eliminated.add(r + ',' + c);
+                        }
+                    }
+                }
+
+                if (eliminated.size === 0) break;
+
+                anyEliminated = true;
+                // 计分
+                score += eliminated.size;
+
+                // 标记消除动画
+                for (const key of eliminated) {
+                    const [r, c] = key.split(',').map(Number);
+                    animations.push({ r, c, type: 'eliminate', life: 12 });
+                    grid[r][c] = { type: 'empty' };
+                }
+
+                // 下落
+                applyGravity();
+
+                // 补充新方块
+                fillEmpty();
+
+                // 检查是否达标
+                if (score >= targetScore) {
+                    gameWon = true;
+                    showingWin = true;
+                    processingMatches = false;
+                    return;
+                }
+
+                // 检查是否无路可走
+                if (!hasValidMoves()) {
+                    gameOver = true;
+                    showingLose = true;
+                    processingMatches = false;
+                    return;
+                }
+            }
+
+            if (!anyEliminated) {
+                if (!hasValidMoves()) {
+                    gameOver = true;
+                    showingLose = true;
+                }
+            }
+            processingMatches = false;
+        }
+
+        function findMatches() {
+            const visited = new Set();
+            const groups = [];
+
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    if (grid[r][c].type !== 'block') continue;
+                    const key = r + ',' + c;
+                    if (visited.has(key)) continue;
+
+                    const color = grid[r][c].color;
+                    const group = [];
+                    const stack = [
+                        [r, c]
+                    ];
+
+                    while (stack.length > 0) {
+                        const [cr, cc] = stack.pop();
+                        const ck = cr + ',' + cc;
+                        if (visited.has(ck)) continue;
+                        if (cr < 0 || cr >= GRID || cc < 0 || cc >= GRID) continue;
+                        if (grid[cr][cc].type !== 'block' || grid[cr][cc].color !== color) continue;
+
+                        visited.add(ck);
+                        group.push([cr, cc]);
+
+                        stack.push([cr - 1, cc]);
+                        stack.push([cr + 1, cc]);
+                        stack.push([cr, cc - 1]);
+                        stack.push([cr, cc + 1]);
+                    }
+
+                    if (group.length >= 2) {
+                        groups.push(group);
+                    }
+                }
+            }
+            return groups;
+        }
+
+        function applyGravity() {
+            for (let c = 0; c < GRID; c++) {
+                let writeRow = GRID - 1;
+                for (let r = GRID - 1; r >= 0; r--) {
+                    if (grid[r][c].type !== 'empty') {
+                        if (r !== writeRow) {
+                            grid[writeRow][c] = grid[r][c];
+                            grid[r][c] = { type: 'empty' };
+                        }
+                        writeRow--;
+                    }
+                }
+            }
+            // 重力可能移动了玩家位置，需要更新
+            updatePlayerPosition();
+        }
+
+        function updatePlayerPosition() {
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    if (grid[r][c].type === 'player') {
+                        playerR = r;
+                        playerC = c;
+                        return;
+                    }
+                }
+            }
+        }
+
+        function fillEmpty() {
+            // 收集所有空格
+            const emptyCells = [];
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    if (grid[r][c].type === 'empty') {
+                        emptyCells.push([r, c]);
+                    }
+                }
+            }
+            if (emptyCells.length === 0) return;
+
+            // 按离玩家的距离从远到近排序（保留玩家附近的空格）
+            emptyCells.sort((a, b) => {
+                const distA = Math.abs(a[0] - playerR) + Math.abs(a[1] - playerC);
+                const distB = Math.abs(b[0] - playerR) + Math.abs(b[1] - playerC);
+                return distB - distA;
+            });
+
+            // 填充远端的格子，但为玩家保留至少 4 个空格
+            const leaveEmpty = Math.min(4, emptyCells.length);
+            const fillCount = emptyCells.length - leaveEmpty;
+            for (let i = 0; i < fillCount; i++) {
+                const [r, c] = emptyCells[i];
+                const ci = Math.floor(Math.random() * COLORS.length);
+                grid[r][c] = { type: 'block', color: ci };
+            }
+        }
+
+        function hasValidMoves() {
+            // 检查是否还有可消除的组
+            const matches = findMatches();
+            if (matches.length > 0) return true;
+
+            // 检查玩家是否还能推动方块
+            for (const [dr, dc] of [
+                    [-1, 0],
+                    [1, 0],
+                    [0, -1],
+                    [0, 1]
+                ]) {
+                const nr = playerR + dr;
+                const nc = playerC + dc;
+                if (nr < 0 || nr >= GRID || nc < 0 || nc >= GRID) continue;
+                if (grid[nr][nc].type === 'block') {
+                    const br = nr + dr;
+                    const bc = nc + dc;
+                    if (br >= 0 && br < GRID && bc >= 0 && bc < GRID && grid[br][bc].type === 'empty') {
+                        return true;
+                    }
+                }
+                if (grid[nr][nc].type === 'empty') {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // --- 输入处理 ---
+        function handleInput(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const mx = (clientX - rect.left) * scaleX;
+            const my = (clientY - rect.top) * scaleY;
+
+            // 检查是否点击了重新开始按钮（在胜利/失败时）
+            if (showingWin || showingLose) {
+                // 点击任意位置重新开始
+                if (mx > 0 && mx < W && my > 0 && my < H) {
+                    level = showingWin ? level + 1 : level;
+                    if (level > 20) level = 1;
+                    initLevel();
+                    return;
+                }
+            }
+
+            // 检查点击网格
+            if (my < OFFSET_Y || my > OFFSET_Y + BOARD_SIZE) return;
+            if (mx < OFFSET_X || mx > OFFSET_X + BOARD_SIZE) return;
+
+            const col = Math.floor((mx - OFFSET_X) / (CELL_SIZE + GAP));
+            const row = Math.floor((my - OFFSET_Y) / (CELL_SIZE + GAP));
+            if (col < 0 || col >= GRID || row < 0 || row >= GRID) return;
+
+            const dr = row - playerR;
+            const dc = col - playerC;
+
+            // 只允许移动相邻格
+            if (Math.abs(dr) + Math.abs(dc) !== 1) return;
+            movePlayer(dr, dc);
+        }
+
+        // 触摸滑动
+        let touchStartX = 0,
+            touchStartY = 0;
+        let isTouching = false;
+
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const t = e.touches[0];
+            touchStartX = t.clientX;
+            touchStartY = t.clientY;
+            isTouching = true;
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', e => {
+            e.preventDefault();
+            if (!isTouching) return;
+            isTouching = false;
+            const t = e.changedTouches[0];
+            const dx = t.clientX - touchStartX;
+            const dy = t.clientY - touchStartY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 15) {
+                // 点击
+                handleInput(touchStartX, touchStartY);
+            } else {
+                // 滑动
+                let dr = 0,
+                    dc = 0;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    dc = dx > 0 ? 1 : -1;
+                } else {
+                    dr = dy > 0 ? 1 : -1;
+                }
+                movePlayer(dr, dc);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('click', e => {
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX;
+            const my = e.clientY;
+            handleInput(mx, my);
+        });
+
+        // 键盘
+        document.addEventListener('keydown', e => {
+            switch (e.key) {
+                case 'ArrowUp':
+                    e.preventDefault();
+                    movePlayer(-1, 0);
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    movePlayer(1, 0);
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    movePlayer(0, -1);
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    movePlayer(0, 1);
+                    break;
+                case 'r':
+                case 'R':
+                    initLevel();
+                    break;
+            }
+        });
+
+        // --- 渲染 ---
+        function draw() {
+            ctx.fillStyle = '#111128';
+            ctx.fillRect(0, 0, W, H);
+
+            // 标题
+            ctx.fillStyle = '#4ecca3';
+            ctx.font = 'bold 24px "Segoe UI", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('🎨 色彩推推乐', W / 2, 34);
+
+            // 状态栏
+            ctx.textAlign = 'left';
+            ctx.font = '15px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#aab';
+            ctx.fillText('关卡 ' + level, OFFSET_X, OFFSET_Y - 22);
+            ctx.fillStyle = '#fff';
+            ctx.fillText('🎯 ' + score + '/' + targetScore, OFFSET_X + 120, OFFSET_Y - 22);
+
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#aab';
+            ctx.fillText('步数 ' + moves, W - OFFSET_X, OFFSET_Y - 22);
+
+            if (gameStarted) {
+                const sec = Math.floor(timer / 60);
+                ctx.fillStyle = '#888';
+                ctx.fillText('⏱ ' + sec + 's', W - OFFSET_X - 80, OFFSET_Y - 22);
+            }
+
+            ctx.textAlign = 'left';
+
+            // 棋盘背景
+            ctx.shadowColor = 'rgba(78,204,163,0.08)';
+            ctx.shadowBlur = 20;
+            ctx.fillStyle = '#0a0a1a';
+            ctx.beginPath();
+            ctx.roundRect(OFFSET_X - 6, OFFSET_Y - 6, BOARD_SIZE + 12, BOARD_SIZE + 12, 14);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // 网格线
+            for (let r = 0; r <= GRID; r++) {
+                const y = OFFSET_Y + r * (CELL_SIZE + GAP) - GAP / 2;
+                ctx.fillStyle = 'rgba(255,255,255,0.04)';
+                ctx.fillRect(OFFSET_X, y, BOARD_SIZE, 1);
+            }
+            for (let c = 0; c <= GRID; c++) {
+                const x = OFFSET_X + c * (CELL_SIZE + GAP) - GAP / 2;
+                ctx.fillStyle = 'rgba(255,255,255,0.04)';
+                ctx.fillRect(x, OFFSET_Y, 1, BOARD_SIZE);
+            }
+
+            // 绘制方块和玩家
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    const x = OFFSET_X + c * (CELL_SIZE + GAP);
+                    const y = OFFSET_Y + r * (CELL_SIZE + GAP);
+                    const cell = grid[r][c];
+
+                    // 检查是否有消除动画
+                    let animScale = 1;
+                    let animAlpha = 1;
+                    for (const anim of animations) {
+                        if (anim.r === r && anim.c === c && anim.type === 'eliminate') {
+                            const progress = 1 - anim.life / 12;
+                            animScale = 1 - progress * 0.7;
+                            animAlpha = 1 - progress;
+                        }
+                    }
+
+                    if (cell.type === 'block') {
+                        const color = COLORS[cell.color];
+                        ctx.save();
+                        ctx.globalAlpha = animAlpha;
+                        ctx.translate(x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+                        ctx.scale(animScale, animScale);
+
+                        // 方块主体
+                        const grad = ctx.createRadialGradient(-8, -8, 4, 0, 0, CELL_SIZE / 1.5);
+                        const base = color;
+                        grad.addColorStop(0, lightenColor(base, 40));
+                        grad.addColorStop(0.7, base);
+                        grad.addColorStop(1, darkenColor(base, 30));
+                        ctx.fillStyle = grad;
+
+                        const radius = 10;
+                        ctx.beginPath();
+                        ctx.roundRect(-CELL_SIZE / 2, -CELL_SIZE / 2, CELL_SIZE, CELL_SIZE, radius);
+                        ctx.fill();
+
+                        // 高光
+                        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                        ctx.beginPath();
+                        ctx.ellipse(-CELL_SIZE / 6, -CELL_SIZE / 6, CELL_SIZE / 5, CELL_SIZE / 7, -0.5, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // 内发光
+                        ctx.shadowColor = color;
+                        ctx.shadowBlur = 8;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.roundRect(-CELL_SIZE / 2 + 2, -CELL_SIZE / 2 + 2, CELL_SIZE - 4, CELL_SIZE - 4, radius - 2);
+                        ctx.stroke();
+                        ctx.shadowBlur = 0;
+
+                        // 颜色标识
+                        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                        ctx.font = 'bold 20px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        const symbols = ['◆', '●', '★', '▲'];
+                        ctx.fillText(symbols[cell.color], 0, 2);
+
+                        ctx.restore();
+                    } else if (cell.type === 'player') {
+                        // 玩家 - 发光圆球
+                        ctx.save();
+                        ctx.translate(x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+
+                        // 光晕
+                        const glow = ctx.createRadialGradient(0, 0, 4, 0, 0, CELL_SIZE / 1.6);
+                        glow.addColorStop(0, 'rgba(255,255,255,0.25)');
+                        glow.addColorStop(1, 'rgba(255,255,255,0)');
+                        ctx.fillStyle = glow;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, CELL_SIZE / 1.6, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // 主体
+                        const pg = ctx.createRadialGradient(-6, -6, 4, 0, 0, CELL_SIZE / 2);
+                        pg.addColorStop(0, '#ffffff');
+                        pg.addColorStop(0.5, '#e8f0fe');
+                        pg.addColorStop(1, '#a0c4ff');
+                        ctx.fillStyle = pg;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, CELL_SIZE / 2.6, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // 眼睛
+                        ctx.fillStyle = '#2d3748';
+                        ctx.beginPath();
+                        ctx.arc(-7, -3, 4, 0, Math.PI * 2);
+                        ctx.arc(7, -3, 4, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = 'white';
+                        ctx.beginPath();
+                        ctx.arc(-5, -5, 1.5, 0, Math.PI * 2);
+                        ctx.arc(9, -5, 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // 微笑
+                        ctx.strokeStyle = '#2d3748';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.arc(0, 4, 8, 0.1, Math.PI - 0.1);
+                        ctx.stroke();
+
+                        ctx.restore();
+                    } else {
+                        // 空格 - 微弱的网格
+                        ctx.fillStyle = 'rgba(255,255,255,0.02)';
+                        ctx.beginPath();
+                        ctx.roundRect(x, y, CELL_SIZE, CELL_SIZE, 6);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // 更新动画
+            animations = animations.filter(a => a.life > 0);
+            for (const anim of animations) {
+                anim.life--;
+            }
+
+            // 胜利/失败
+            if (showingWin) {
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#4ecca3';
+                ctx.font = 'bold 42px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🎉 过关！', W / 2, H / 2 - 30);
+
+                ctx.fillStyle = '#ddd';
+                ctx.font = '18px "Segoe UI", sans-serif';
+                ctx.fillText('分数 ' + score + '  步数 ' + moves + '  关卡 ' + level, W / 2, H / 2 + 30);
+
+                ctx.fillStyle = '#4ecca3';
+                ctx.font = '16px "Segoe UI", sans-serif';
+                ctx.fillText('👆 点击进入下一关', W / 2, H / 2 + 80);
+                ctx.textAlign = 'left';
+            } else if (showingLose) {
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ff6b6b';
+                ctx.font = 'bold 42px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('😵 卡住了！', W / 2, H / 2 - 30);
+
+                ctx.fillStyle = '#ddd';
+                ctx.font = '18px "Segoe UI", sans-serif';
+                ctx.fillText('分数 ' + score + '  目标 ' + targetScore, W / 2, H / 2 + 30);
+
+                ctx.fillStyle = '#ff6b6b';
+                ctx.font = '16px "Segoe UI", sans-serif';
+                ctx.fillText('👆 点击重试', W / 2, H / 2 + 80);
+                ctx.textAlign = 'left';
+            }
+
+            // 底部提示
+            if (!gameStarted && !showingWin && !showingLose) {
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.font = '13px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('方向键 / 滑动 / 点击相邻格移动  推动同色方块相连消除', W / 2, H - 18);
+                ctx.textAlign = 'left';
+            }
+        }
+
+        // --- 工具函数 ---
+        function lightenColor(color, amount) {
+            const r = parseInt(color.slice(1, 3), 16);
+            const g = parseInt(color.slice(3, 5), 16);
+            const b = parseInt(color.slice(5, 7), 16);
+            const nr = Math.min(255, r + amount);
+            const ng = Math.min(255, g + amount);
+            const nb = Math.min(255, b + amount);
+            return `rgb(${nr},${ng},${nb})`;
+        }
+
+        function darkenColor(color, amount) {
+            const r = parseInt(color.slice(1, 3), 16);
+            const g = parseInt(color.slice(3, 5), 16);
+            const b = parseInt(color.slice(5, 7), 16);
+            const nr = Math.max(0, r - amount);
+            const ng = Math.max(0, g - amount);
+            const nb = Math.max(0, b - amount);
+            return `rgb(${nr},${ng},${nb})`;
+        }
+
+        // --- roundRect polyfill ---
+        if (!CanvasRenderingContext2D.prototype.roundRect) {
+            CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+                if (r > w / 2) r = w / 2;
+                if (r > h / 2) r = h / 2;
+                this.moveTo(x + r, y);
+                this.lineTo(x + w - r, y);
+                this.quadraticCurveTo(x + w, y, x + w, y + r);
+                this.lineTo(x + w, y + h - r);
+                this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                this.lineTo(x + r, y + h);
+                this.quadraticCurveTo(x, y + h, x, y + h - r);
+                this.lineTo(x, y + r);
+                this.quadraticCurveTo(x, y, x + r, y);
+                this.closePath();
+                return this;
+            };
+        }
+
+        // --- 游戏循环 ---
+        function gameLoop() {
+            if (gameStarted && !gameWon && !gameOver) {
+                timer++;
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- resize ---
+        function resize() {
+            const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+            canvas.style.width = (W * scale) + 'px';
+            canvas.style.height = (H * scale) + 'px';
+        }
+        window.addEventListener('resize', resize);
+
+        // --- 启动 ---
+        initLevel();
+        gameLoop();
+        resize();
+
+        // --- 响应重开 ---
+        document.addEventListener('keydown', e => {
+            if (e.key === 'r' || e.key === 'R') {
+                initLevel();
+            }
+        });
+
+        console.log('🎨 色彩推推乐 - 推动同色方块相连消除！');
+        console.log('💡 方向键/滑动/点击相邻格移动  |  R键重启关卡');
+    </script>
+</body>
+</html>

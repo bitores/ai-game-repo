@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>旋转迷宫·视角探秘</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: #0a0a1a;
+            font-family: 'Segoe UI', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 14px 18px;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            z-index: 10;
+        }
+        #ui-left {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        #ui-right {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+        }
+        .ui-label {
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 14px;
+            font-weight: 600;
+            text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+            background: rgba(0, 0, 0, 0.45);
+            padding: 4px 12px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            letter-spacing: 0.5px;
+            pointer-events: auto;
+        }
+        .ui-label small {
+            font-weight: 400;
+            opacity: 0.7;
+            font-size: 12px;
+        }
+        #status-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 36px;
+            font-weight: 700;
+            text-align: center;
+            text-shadow: 0 6px 40px rgba(0, 0, 0, 0.95);
+            pointer-events: none;
+            z-index: 20;
+            display: none;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 24px 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            line-height: 1.5;
+        }
+        #status-msg small {
+            display: block;
+            font-size: 16px;
+            font-weight: 400;
+            opacity: 0.7;
+            margin-top: 10px;
+        }
+        #controls-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 12px;
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 6px 18px;
+            border-radius: 30px;
+            backdrop-filter: blur(4px);
+            letter-spacing: 0.3px;
+        }
+        @media (max-width: 600px) {
+            .ui-label {
+                font-size: 11px;
+                padding: 3px 10px;
+            }
+            #status-msg {
+                font-size: 24px;
+                padding: 16px 24px;
+            }
+            #status-msg small {
+                font-size: 13px;
+            }
+            #controls-hint {
+                font-size: 10px;
+                bottom: 12px;
+                padding: 4px 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="ui-left">
+            <div class="ui-label" id="view-label">🎥 俯视</div>
+            <div class="ui-label" id="pos-label">📍 0, 0</div>
+        </div>
+        <div id="ui-right">
+            <div class="ui-label" id="goal-label">🏁 目标: 6, 6</div>
+            <div class="ui-label" id="time-label">⏱ 0s</div>
+        </div>
+    </div>
+
+    <div id="status-msg"></div>
+    <div id="controls-hint">WASD / 方向键 移动 · 1-4 切换视角 · 迷宫旋转中</div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // ─── 配置 ───
+        const MAZE_ROWS = 7;
+        const MAZE_COLS = 7;
+        const CELL_SIZE = 2.2;
+        const WALL_HEIGHT = 1.4;
+        const WALL_THICK = 0.14;
+        const PLAYER_RADIUS = 0.35;
+        const ROTATE_SPEED = 0.25;
+        const MOVE_SPEED = 4.5;
+        const HIDDEN_WALL_COUNT = 7;
+
+        // ─── 迷宫生成 (DFS) ───
+        class Cell {
+            constructor(x, z) {
+                this.x = x;
+                this.z = z;
+                this.visited = false;
+                this.walls = { N: true, S: true, E: true, W: true };
+            }
+        }
+
+        function generateMaze(rows, cols) {
+            const grid = [];
+            for (let z = 0; z < rows; z++) {
+                grid[z] = [];
+                for (let x = 0; x < cols; x++) {
+                    grid[z][x] = new Cell(x, z);
+                }
+            }
+            const stack = [];
+            const start = grid[0][0];
+            start.visited = true;
+            stack.push(start);
+            const dirs = [
+                [0, -1, 'N', 'S'],
+                [0, 1, 'S', 'N'],
+                [1, 0, 'E', 'W'],
+                [-1, 0, 'W', 'E']
+            ];
+            while (stack.length > 0) {
+                const cur = stack[stack.length - 1];
+                const neighbors = [];
+                for (const d of dirs) {
+                    const nx = cur.x + d[0],
+                        nz = cur.z + d[1];
+                    if (nx >= 0 && nx < cols && nz >= 0 && nz < rows && !grid[nz][nx].visited) {
+                        neighbors.push({ cell: grid[nz][nx], dir: d[2], opp: d[3] });
+                    }
+                }
+                if (neighbors.length > 0) {
+                    const next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    cur.walls[next.dir] = false;
+                    next.cell.walls[next.opp] = false;
+                    next.cell.visited = true;
+                    stack.push(next.cell);
+                } else {
+                    stack.pop();
+                }
+            }
+            return grid;
+        }
+
+        const mazeGrid = generateMaze(MAZE_ROWS, MAZE_COLS);
+
+        // 选择隐藏通道 (随机墙壁)
+        const hiddenWalls = [];
+        const allWalls = [];
+        for (let z = 0; z < MAZE_ROWS; z++) {
+            for (let x = 0; x < MAZE_COLS; x++) {
+                const cell = mazeGrid[z][x];
+                if (cell.walls.N && z > 0) allWalls.push({ x, z, dir: 'N' });
+                if (cell.walls.S && z < MAZE_ROWS - 1) allWalls.push({ x, z, dir: 'S' });
+                if (cell.walls.E && x < MAZE_COLS - 1) allWalls.push({ x, z, dir: 'E' });
+                if (cell.walls.W && x > 0) allWalls.push({ x, z, dir: 'W' });
+            }
+        }
+        // 去重（只取每个墙壁一次）
+        const wallSet = new Set();
+        const uniqueWalls = [];
+        for (const w of allWalls) {
+            let key;
+            if (w.dir === 'N') key = `${w.x},${w.z}-${w.x},${w.z+1}`;
+            else if (w.dir === 'S') key = `${w.x},${w.z}-${w.x},${w.z-1}`;
+            else if (w.dir === 'E') key = `${w.x},${w.z}-${w.x+1},${w.z}`;
+            else key = `${w.x},${w.z}-${w.x-1},${w.z}`;
+            if (!wallSet.has(key)) {
+                wallSet.add(key);
+                uniqueWalls.push(w);
+            }
+        }
+        // 随机选一些作为隐藏通道
+        const shuffled = [...uniqueWalls];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        const hiddenSet = new Set();
+        for (let i = 0; i < Math.min(HIDDEN_WALL_COUNT, shuffled.length); i++) {
+            const w = shuffled[i];
+            let key;
+            if (w.dir === 'N') key = `${w.x},${w.z}-${w.x},${w.z+1}`;
+            else if (w.dir === 'S') key = `${w.x},${w.z}-${w.x},${w.z-1}`;
+            else if (w.dir === 'E') key = `${w.x},${w.z}-${w.x+1},${w.z}`;
+            else key = `${w.x},${w.z}-${w.x-1},${w.z}`;
+            hiddenSet.add(key);
+            // 标记cell中的这个墙为隐藏
+            if (w.dir === 'N') mazeGrid[w.z][w.x].walls.N = 'hidden';
+            else if (w.dir === 'S') mazeGrid[w.z][w.x].walls.S = 'hidden';
+            else if (w.dir === 'E') mazeGrid[w.z][w.x].walls.E = 'hidden';
+            else if (w.dir === 'W') mazeGrid[w.z][w.x].walls.W = 'hidden';
+            // 邻居的对应墙也标记
+            if (w.dir === 'N' && w.z + 1 < MAZE_ROWS) mazeGrid[w.z + 1][w.x].walls.S = 'hidden';
+            if (w.dir === 'S' && w.z - 1 >= 0) mazeGrid[w.z - 1][w.x].walls.N = 'hidden';
+            if (w.dir === 'E' && w.x + 1 < MAZE_COLS) mazeGrid[w.z][w.x + 1].walls.W = 'hidden';
+            if (w.dir === 'W' && w.x - 1 >= 0) mazeGrid[w.z][w.x - 1].walls.E = 'hidden';
+        }
+
+        // ─── Three.js 场景 ───
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a1a);
+        scene.fog = new THREE.Fog(0x0a0a1a, 25, 45);
+
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 80);
+        camera.position.set(0, 18, 12);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        document.body.prepend(renderer.domElement);
+
+        // ─── 灯光 ───
+        const ambient = new THREE.AmbientLight(0x334466, 0.6);
+        scene.add(ambient);
+
+        const dirLight = new THREE.DirectionalLight(0xffeedd, 2.0);
+        dirLight.position.set(12, 22, 8);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 50;
+        dirLight.shadow.camera.left = -20;
+        dirLight.shadow.camera.right = 20;
+        dirLight.shadow.camera.top = 20;
+        dirLight.shadow.camera.bottom = -20;
+        scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0x4488ff, 0.5);
+        fillLight.position.set(-10, 8, -12);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0xff66aa, 0.3);
+        rimLight.position.set(0, -4, -18);
+        scene.add(rimLight);
+
+        // ─── 迷宫组 (整体旋转) ───
+        const mazeGroup = new THREE.Group();
+        scene.add(mazeGroup);
+
+        // ─── 构建迷宫 ───
+        const offsetX = -(MAZE_COLS * CELL_SIZE) / 2 + CELL_SIZE / 2;
+        const offsetZ = -(MAZE_ROWS * CELL_SIZE) / 2 + CELL_SIZE / 2;
+
+        const floorMat = new THREE.MeshStandardMaterial({
+            color: 0x141438,
+            roughness: 0.7,
+            metalness: 0.1,
+        });
+        const wallMatNormal = new THREE.MeshStandardMaterial({
+            color: 0x3a3a7a,
+            roughness: 0.5,
+            metalness: 0.3,
+            emissive: 0x1a1a4a,
+            emissiveIntensity: 0.1,
+        });
+        const wallMatHidden = new THREE.MeshStandardMaterial({
+            color: 0x6a4aaa,
+            roughness: 0.4,
+            metalness: 0.5,
+            emissive: 0x8844cc,
+            emissiveIntensity: 0.15,
+            transparent: true,
+            opacity: 1.0,
+        });
+        const wallMatBoundary = new THREE.MeshStandardMaterial({
+            color: 0x2a2a5a,
+            roughness: 0.6,
+            metalness: 0.2,
+        });
+
+        // 地板
+        const floorGeo = new THREE.PlaneGeometry(CELL_SIZE * 0.92, CELL_SIZE * 0.92);
+        for (let z = 0; z < MAZE_ROWS; z++) {
+            for (let x = 0; x < MAZE_COLS; x++) {
+                const mesh = new THREE.Mesh(floorGeo, floorMat);
+                const wx = offsetX + x * CELL_SIZE;
+                const wz = offsetZ + z * CELL_SIZE;
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.position.set(wx, -WALL_HEIGHT / 2 + 0.02, wz);
+                mesh.receiveShadow = true;
+                mazeGroup.add(mesh);
+            }
+        }
+
+        // 墙壁缓存 (用于碰撞和隐藏)
+        const wallMeshes = [];
+        const hiddenWallMeshes = [];
+
+        function createWall(x1, z1, x2, z2, isBoundary = false, isHidden = false) {
+            const mx = (x1 + x2) / 2;
+            const mz = (z1 + z2) / 2;
+            const dx = x2 - x1;
+            const dz = z2 - z1;
+            const len = Math.sqrt(dx * dx + dz * dz);
+            const angle = Math.atan2(dx, dz);
+
+            const geo = new THREE.BoxGeometry(WALL_THICK, WALL_HEIGHT, len);
+            const mat = isHidden ? wallMatHidden : (isBoundary ? wallMatBoundary : wallMatNormal);
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(mx, WALL_HEIGHT / 2, mz);
+            mesh.rotation.y = angle;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mazeGroup.add(mesh);
+
+            // 存储墙壁数据用于碰撞和隐藏
+            const wallData = {
+                mesh,
+                x1,
+                z1,
+                x2,
+                z2,
+                isHidden,
+                isBoundary,
+                // 用于碰撞的线段
+                ax: x1,
+                az: z1,
+                bx: x2,
+                bz: z2,
+            };
+            wallMeshes.push(wallData);
+            if (isHidden) hiddenWallMeshes.push(wallData);
+            return mesh;
+        }
+
+        // 遍历所有cell创建墙壁
+        for (let z = 0; z < MAZE_ROWS; z++) {
+            for (let x = 0; x < MAZE_COLS; x++) {
+                const cell = mazeGrid[z][x];
+                const cx = offsetX + x * CELL_SIZE;
+                const cz = offsetZ + z * CELL_SIZE;
+                const half = CELL_SIZE / 2;
+
+                // 北墙
+                if (cell.walls.N) {
+                    const isHidden = cell.walls.N === 'hidden';
+                    const isBoundary = (z === 0);
+                    const wall = createWall(cx - half, cz + half, cx + half, cz + half, isBoundary, isHidden);
+                    // 存储引用
+                    if (isHidden) wall.userData = { hidden: true, dir: 'N', x, z };
+                }
+                // 南墙
+                if (cell.walls.S) {
+                    const isHidden = cell.walls.S === 'hidden';
+                    const isBoundary = (z === MAZE_ROWS - 1);
+                    const wall = createWall(cx - half, cz - half, cx + half, cz - half, isBoundary, isHidden);
+                    if (isHidden) wall.userData = { hidden: true, dir: 'S', x, z };
+                }
+                // 东墙
+                if (cell.walls.E) {
+                    const isHidden = cell.walls.E === 'hidden';
+                    const isBoundary = (x === MAZE_COLS - 1);
+                    const wall = createWall(cx + half, cz - half, cx + half, cz + half, isBoundary, isHidden);
+                    if (isHidden) wall.userData = { hidden: true, dir: 'E', x, z };
+                }
+                // 西墙
+                if (cell.walls.W) {
+                    const isHidden = cell.walls.W === 'hidden';
+                    const isBoundary = (x === 0);
+                    const wall = createWall(cx - half, cz - half, cx - half, cz + half, isBoundary, isHidden);
+                    if (isHidden) wall.userData = { hidden: true, dir: 'W', x, z };
+                }
+            }
+        }
+
+        // 边界墙（确保封闭）
+        // 额外边界已经在上面处理了 (isBoundary)
+
+        // ─── 终点标记 ───
+        const goalX = MAZE_COLS - 1,
+            goalZ = MAZE_ROWS - 1;
+        const goalWX = offsetX + goalX * CELL_SIZE;
+        const goalWZ = offsetZ + goalZ * CELL_SIZE;
+
+        const goalMat = new THREE.MeshStandardMaterial({
+            color: 0xffd700,
+            roughness: 0.2,
+            metalness: 0.9,
+            emissive: 0xffaa00,
+            emissiveIntensity: 0.5,
+        });
+        const goalGeo = new THREE.BoxGeometry(CELL_SIZE * 0.6, WALL_HEIGHT * 0.5, CELL_SIZE * 0.6);
+        const goalMesh = new THREE.Mesh(goalGeo, goalMat);
+        goalMesh.position.set(goalWX, WALL_HEIGHT * 0.25, goalWZ);
+        goalMesh.castShadow = true;
+        mazeGroup.add(goalMesh);
+
+        // 终点光柱
+        const beamGeo = new THREE.CylinderGeometry(0.15, 0.4, 4, 12);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: 0xffd700,
+            transparent: true,
+            opacity: 0.2,
+            blending: THREE.AdditiveBlending,
+        });
+        const beam = new THREE.Mesh(beamGeo, beamMat);
+        beam.position.set(goalWX, 2.5, goalWZ);
+        mazeGroup.add(beam);
+
+        const beamGlow = new THREE.Mesh(
+            new THREE.SphereGeometry(0.6, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.1, blending: THREE
+                    .AdditiveBlending })
+        );
+        beamGlow.position.set(goalWX, 0.8, goalWZ);
+        mazeGroup.add(beamGlow);
+
+        // 终点地板标记
+        const markerGeo = new THREE.RingGeometry(0.5, 0.9, 32);
+        const markerMat = new THREE.MeshBasicMaterial({
+            color: 0xffd700,
+            transparent: true,
+            opacity: 0.25,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+        });
+        const marker = new THREE.Mesh(markerGeo, markerMat);
+        marker.rotation.x = -Math.PI / 2;
+        marker.position.set(goalWX, -WALL_HEIGHT / 2 + 0.05, goalWZ);
+        mazeGroup.add(marker);
+
+        // ─── 玩家 ───
+        const playerGroup = new THREE.Group();
+        const playerBodyMat = new THREE.MeshStandardMaterial({
+            color: 0x4ecca3,
+            roughness: 0.2,
+            metalness: 0.7,
+            emissive: 0x4ecca3,
+            emissiveIntensity: 0.15,
+        });
+        const playerBody = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_RADIUS * 1.6, PLAYER_RADIUS * 1.6, PLAYER_RADIUS *
+        1.6), playerBodyMat);
+        playerBody.castShadow = true;
+        playerGroup.add(playerBody);
+
+        const playerGlow = new THREE.Mesh(
+            new THREE.SphereGeometry(PLAYER_RADIUS * 1.3, 12, 12),
+            new THREE.MeshBasicMaterial({
+                color: 0x4ecca3,
+                transparent: true,
+                opacity: 0.15,
+                blending: THREE.AdditiveBlending,
+            })
+        );
+        playerGroup.add(playerGlow);
+
+        // 玩家起点
+        const startX = offsetX;
+        const startZ = offsetZ;
+        playerGroup.position.set(startX, PLAYER_RADIUS, startZ);
+        scene.add(playerGroup);
+
+        // ─── 粒子系统 ───
+        const particleCount = 300;
+        const pGeo = new THREE.BufferGeometry();
+        const pPos = new Float32Array(particleCount * 3);
+        const pCol = new Float32Array(particleCount * 3);
+        for (let i = 0; i < particleCount; i++) {
+            pPos[i * 3] = (Math.random() - 0.5) * 50;
+            pPos[i * 3 + 1] = Math.random() * 16;
+            pPos[i * 3 + 2] = (Math.random() - 0.5) * 50;
+            const c = new THREE.Color().setHSL(0.65 + Math.random() * 0.2, 0.6, 0.2 + Math.random() * 0.3);
+            pCol[i * 3] = c.r;
+            pCol[i * 3 + 1] = c.g;
+            pCol[i * 3 + 2] = c.b;
+        }
+        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+        const pMat = new THREE.PointsMaterial({
+            size: 0.07,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.5,
+            blending: THREE.AdditiveBlending,
+        });
+        const particles = new THREE.Points(pGeo, pMat);
+        scene.add(particles);
+
+        // ─── 输入 ───
+        const keys = {};
+        let touchActive = false;
+        let touchDX = 0,
+            touchDZ = 0;
+
+        document.addEventListener('keydown', e => { keys[e.key] = true; });
+        document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+        renderer.domElement.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const t = e.touches[0];
+            touchActive = true;
+            const cx = window.innerWidth / 2,
+                cy = window.innerHeight / 2;
+            touchDX = (t.clientX - cx) / cx;
+            touchDZ = (t.clientY - cy) / cy;
+        }, { passive: false });
+        renderer.domElement.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const t = e.touches[0];
+            const cx = window.innerWidth / 2,
+                cy = window.innerHeight / 2;
+            touchDX = (t.clientX - cx) / cx;
+            touchDZ = (t.clientY - cy) / cy;
+        }, { passive: false });
+        renderer.domElement.addEventListener('touchend', () => {
+            touchActive = false;
+            touchDX = 0;
+            touchDZ = 0;
+        });
+
+        // ─── 视角系统 ───
+        const VIEW_MODES = [
+            { id: 'top', label: '🎥 俯视', pos: [0, 22, 0.01], target: [0, 0, 0] },
+            { id: 'follow', label: '🎥 跟随', pos: [0, 8, 12], target: [0, 0, 0] },
+            { id: 'first', label: '🎥 第一人称', pos: [0, 0.6, 0], target: [0, 0, -4] },
+            { id: 'xray', label: '🔍 透视', pos: [0, 16, 10], target: [0, 0, 0] },
+        ];
+        let currentView = 0;
+        let viewTransition = 0;
+        let viewFrom = { ...camera.position };
+        let viewTo = { ...camera.position };
+        let viewTargetFrom = new THREE.Vector3();
+        let viewTargetTo = new THREE.Vector3();
+        let isTransitioning = false;
+        let transitionTime = 0;
+        const TRANSITION_DURATION = 0.6;
+
+        function applyViewMode(index, instant = false) {
+            const mode = VIEW_MODES[index];
+            const p = mode.pos;
+            const t = mode.target;
+            if (instant) {
+                camera.position.set(p[0], p[1], p[2]);
+                camera.lookAt(t[0], t[1], t[2]);
+                viewTargetTo.set(t[0], t[1], t[2]);
+                isTransitioning = false;
+                document.getElementById('view-label').textContent = mode.label;
+                return;
+            }
+            viewFrom = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+            viewTo = { x: p[0], y: p[1], z: p[2] };
+            viewTargetFrom.copy(camera.position).add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(5));
+            viewTargetTo.set(t[0], t[1], t[2]);
+            transitionTime = 0;
+            isTransitioning = true;
+            document.getElementById('view-label').textContent = mode.label;
+        }
+
+        // 初始视角
+        applyViewMode(0, true);
+
+        document.addEventListener('keydown', e => {
+            const n = parseInt(e.key);
+            if (n >= 1 && n <= 4 && n <= VIEW_MODES.length) {
+                const idx = n - 1;
+                if (idx !== currentView) {
+                    currentView = idx;
+                    applyViewMode(idx);
+                }
+            }
+        });
+
+        // ─── 碰撞检测 (迷宫局部坐标) ───
+        function checkCollision(px, pz, radius) {
+            // 将世界坐标转换为迷宫局部坐标
+            const localPos = new THREE.Vector3(px, 0, pz);
+            mazeGroup.worldToLocal(localPos);
+            const lx = localPos.x;
+            const lz = localPos.z;
+
+            // 边界检测
+            const halfTotal = (MAZE_COLS * CELL_SIZE) / 2;
+            const halfTotalZ = (MAZE_ROWS * CELL_SIZE) / 2;
+            if (lx < -halfTotal + radius || lx > halfTotal - radius ||
+                lz < -halfTotalZ + radius || lz > halfTotalZ - radius) {
+                return true;
+            }
+
+            // 与墙壁碰撞检测 (线段与圆)
+            for (const wall of wallMeshes) {
+                if (wall.isHidden) continue; // 隐藏通道在透视模式下可穿过，在普通模式下仍然阻挡
+                // 但在xray视角下，隐藏墙透明且可穿过
+                if (wall.isHidden && currentView === 3) continue;
+
+                const ax = wall.ax,
+                    az = wall.az;
+                const bx = wall.bx,
+                    bz = wall.bz;
+
+                // 计算圆心到线段的最短距离
+                const dx = bx - ax,
+                    dz = bz - az;
+                const lenSq = dx * dx + dz * dz;
+                if (lenSq === 0) continue;
+                let t = ((lx - ax) * dx + (lz - az) * dz) / lenSq;
+                t = Math.max(0, Math.min(1, t));
+                const closestX = ax + t * dx;
+                const closestZ = az + t * dz;
+                const dist = Math.sqrt((lx - closestX) ** 2 + (lz - closestZ) ** 2);
+                if (dist < radius + WALL_THICK / 2) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // ─── 游戏状态 ───
+        let gameWon = false;
+        let gameTime = 0;
+        let posLabel = document.getElementById('pos-label');
+        let goalLabel = document.getElementById('goal-label');
+        let timeLabel = document.getElementById('time-label');
+        let statusMsg = document.getElementById('status-msg');
+
+        function showStatus(text, sub) {
+            statusMsg.style.display = 'block';
+            statusMsg.innerHTML = text + (sub ? `<small>${sub}</small>` : '');
+        }
+
+        function hideStatus() {
+            statusMsg.style.display = 'none';
+        }
+
+        function updateUI() {
+            const localPos = new THREE.Vector3(playerGroup.position.x, 0, playerGroup.position.z);
+            mazeGroup.worldToLocal(localPos);
+            const gx = Math.round((localPos.x - offsetX) / CELL_SIZE);
+            const gz = Math.round((localPos.z - offsetZ) / CELL_SIZE);
+            posLabel.textContent = `📍 ${Math.max(0,Math.min(MAZE_COLS-1,gx))}, ${Math.max(0,Math.min(MAZE_ROWS-1,gz))}`;
+            timeLabel.textContent = `⏱ ${Math.floor(gameTime)}s`;
+        }
+
+        hideStatus();
+
+        // ─── 胜利检测 ───
+        function checkWin() {
+            if (gameWon) return;
+            const localPos = new THREE.Vector3(playerGroup.position.x, 0, playerGroup.position.z);
+            mazeGroup.worldToLocal(localPos);
+            const gx = Math.round((localPos.x - offsetX) / CELL_SIZE);
+            const gz = Math.round((localPos.z - offsetZ) / CELL_SIZE);
+            if (gx === goalX && gz === goalZ) {
+                gameWon = true;
+                showStatus('🎉 恭喜过关！', `用时 ${Math.floor(gameTime)} 秒 · 按 R 重新开始`);
+            }
+        }
+
+        // ─── 重新开始 ───
+        function restartGame() {
+            gameWon = false;
+            gameTime = 0;
+            playerGroup.position.set(startX, PLAYER_RADIUS, startZ);
+            playerBody.material.color.setHex(0x4ecca3);
+            playerBody.material.emissive.setHex(0x4ecca3);
+            hideStatus();
+            updateUI();
+            // 重置视角
+            currentView = 0;
+            applyViewMode(0, true);
+        }
+
+        document.addEventListener('keydown', e => {
+            if ((e.key === 'r' || e.key === 'R') && gameWon) restartGame();
+        });
+        renderer.domElement.addEventListener('dblclick', () => {
+            if (gameWon) restartGame();
+        });
+
+        // ─── 更新循环 ───
+        function update(dt) {
+            if (!gameWon) gameTime += dt;
+
+            // 迷宫旋转
+            mazeGroup.rotation.y += ROTATE_SPEED * dt;
+
+            // 视角过渡
+            if (isTransitioning) {
+                transitionTime += dt;
+                const t = Math.min(transitionTime / TRANSITION_DURATION, 1);
+                const ease = t * t * (3 - 2 * t); // smoothstep
+                camera.position.set(
+                    viewFrom.x + (viewTo.x - viewFrom.x) * ease,
+                    viewFrom.y + (viewTo.y - viewFrom.y) * ease,
+                    viewFrom.z + (viewTo.z - viewFrom.z) * ease,
+                );
+                const target = new THREE.Vector3().lerpVectors(viewTargetFrom, viewTargetTo, ease);
+                camera.lookAt(target);
+                if (t >= 1) {
+                    isTransitioning = false;
+                    camera.lookAt(viewTargetTo);
+                }
+            } else {
+                // 跟随模式：相机跟随玩家
+                if (VIEW_MODES[currentView].id === 'follow') {
+                    const offset = new THREE.Vector3(0, 8, 12);
+                    const worldOffset = offset.clone().applyQuaternion(playerGroup.quaternion);
+                    const targetPos = playerGroup.position.clone().add(worldOffset);
+                    camera.position.lerp(targetPos, dt * 2.5);
+                    const lookTarget = playerGroup.position.clone();
+                    lookTarget.y += 1;
+                    camera.lookAt(lookTarget);
+                }
+                // 第一人称
+                if (VIEW_MODES[currentView].id === 'first') {
+                    const pos = playerGroup.position.clone();
+                    pos.y += 0.5;
+                    camera.position.lerp(pos, dt * 4);
+                    const dir = new THREE.Vector3(0, 0, -1);
+                    dir.applyQuaternion(playerGroup.quaternion);
+                    const lookTarget = playerGroup.position.clone().add(dir.multiplyScalar(4));
+                    lookTarget.y += 0.5;
+                    camera.lookAt(lookTarget);
+                }
+                // 俯视和透视：跟随玩家位置但保持高度和距离
+                if (VIEW_MODES[currentView].id === 'top' || VIEW_MODES[currentView].id === 'xray') {
+                    const mode = VIEW_MODES[currentView];
+                    const targetPos = playerGroup.position.clone();
+                    targetPos.y = 0;
+                    const desired = new THREE.Vector3(
+                        targetPos.x + mode.pos[0],
+                        mode.pos[1],
+                        targetPos.z + mode.pos[2],
+                    );
+                    camera.position.lerp(desired, dt * 1.8);
+                    const lookTarget = targetPos.clone();
+                    lookTarget.y += 0.5;
+                    camera.lookAt(lookTarget);
+                }
+            }
+
+            // 玩家移动 (仅当未胜利)
+            if (!gameWon) {
+                let dx = 0,
+                    dz = 0;
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1;
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1;
+                if (keys['ArrowUp'] || keys['w'] || keys['W']) dz = -1;
+                if (keys['ArrowDown'] || keys['s'] || keys['S']) dz = 1;
+
+                if (touchActive) {
+                    const dead = 0.2;
+                    if (Math.abs(touchDX) > dead) dx = touchDX > 0 ? 1 : -1;
+                    if (Math.abs(touchDZ) > dead) dz = touchDZ > 0 ? 1 : -1;
+                }
+
+                if (dx !== 0 && dz !== 0) { dx *= 0.707;
+                    dz *= 0.707; }
+
+                if (dx !== 0 || dz !== 0) {
+                    const speed = MOVE_SPEED * dt;
+                    const newX = playerGroup.position.x + dx * speed;
+                    const newZ = playerGroup.position.z + dz * speed;
+
+                    // 分别检测X和Z方向的碰撞，实现滑墙
+                    if (!checkCollision(newX, playerGroup.position.z, PLAYER_RADIUS)) {
+                        playerGroup.position.x = newX;
+                    }
+                    if (!checkCollision(playerGroup.position.x, newZ, PLAYER_RADIUS)) {
+                        playerGroup.position.z = newZ;
+                    }
+
+                    // 玩家朝向移动方向
+                    const targetAngle = Math.atan2(dx, dz);
+                    let currentAngle = playerGroup.rotation.y;
+                    let diff = targetAngle - currentAngle;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    playerGroup.rotation.y += diff * dt * 8;
+
+                    // 移动动画
+                    const bob = Math.sin(gameTime * 12) * 0.04;
+                    playerBody.position.y = bob;
+                    playerGlow.scale.setScalar(1 + Math.sin(gameTime * 10) * 0.03);
+                } else {
+                    playerBody.position.y *= 0.9;
+                    playerGlow.scale.setScalar(1);
+                }
+
+                // 检查胜利
+                checkWin();
+            }
+
+            // 粒子动画
+            const pos = particles.geometry.attributes.position.array;
+            for (let i = 0; i < particleCount; i++) {
+                pos[i * 3 + 1] += Math.sin(gameTime * 0.8 + i * 0.7) * dt * 0.015;
+                if (pos[i * 3 + 1] > 16) pos[i * 3 + 1] = 0;
+                if (pos[i * 3 + 1] < 0) pos[i * 3 + 1] = 16;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+
+            // 终点动画
+            const pulse = 0.6 + Math.sin(gameTime * 2.5) * 0.4;
+            goalMat.emissiveIntensity = 0.3 + pulse * 0.5;
+            beam.material.opacity = 0.1 + Math.sin(gameTime * 3) * 0.08;
+            beamGlow.scale.setScalar(1 + Math.sin(gameTime * 2) * 0.15);
+            marker.material.opacity = 0.15 + Math.sin(gameTime * 2) * 0.1;
+
+            // 隐藏通道材质更新 (透视模式)
+            const isXray = (currentView === 3);
+            for (const w of hiddenWallMeshes) {
+                if (isXray) {
+                    w.mesh.material.opacity = 0.2;
+                    w.mesh.material.transparent = true;
+                    w.mesh.material.color.setHex(0x9966ff);
+                    w.mesh.material.emissive.setHex(0x8844ff);
+                    w.mesh.material.emissiveIntensity = 0.4;
+                } else {
+                    w.mesh.material.opacity = 1.0;
+                    w.mesh.material.transparent = false;
+                    w.mesh.material.color.setHex(0x3a3a7a);
+                    w.mesh.material.emissive.setHex(0x1a1a4a);
+                    w.mesh.material.emissiveIntensity = 0.1;
+                }
+                w.mesh.material.needsUpdate = true;
+            }
+
+            updateUI();
+        }
+
+        // ─── 游戏循环 ───
+        let lastTime = 0;
+
+        function animate(time) {
+            const dt = Math.min((time - lastTime) / 1000, 0.05);
+            lastTime = time;
+            update(dt);
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+
+        animate(0);
+
+        // ─── 响应式 ───
+        window.addEventListener('resize', () => {
+            camera.aspect = window.inner

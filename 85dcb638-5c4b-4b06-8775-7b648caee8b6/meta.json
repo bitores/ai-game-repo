@@ -1,0 +1,12 @@
+{
+  "name": "平台跳跃",
+  "slug": "platformer",
+  "description": "横版平台跳跃游戏，玩家控制角色在平台间跳跃，收集道具并躲避敌人",
+  "icon": "🎮",
+  "difficulty": "beginner",
+  "prompt_guide": "## PLATFORMER-SPECIFIC GUIDANCE\n- Player character with gravity, jumping, and horizontal movement (WASD/arrows + space)\n- Platforms at varied heights, collectible items, and enemies\n- Parallax background scrolling for visual depth\n- Level-complete flag/door\n- Health system with visual feedback\n## Available Assets\n- `assets/placeholder.png` — 1×1 placeholder image only; no bundled sprites or audio. The game renders entirely via Canvas 2D drawing — AI should generate all visual/audio content programmatically or reference external CDN assets",
+  "example": {
+    "title": "猫咪云朵冒险",
+    "prompt": "一个平台跳跃游戏，主角是猫咪，在云朵之间跳跃收集星星，躲避小鸟敌人。有计分和游戏结束画面。"
+  }
+}

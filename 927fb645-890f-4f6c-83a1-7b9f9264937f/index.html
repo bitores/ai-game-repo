@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Cat Jumper</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#222;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif}
+#game{position:relative;display:flex;flex-direction:column;align-items:center}
+canvas{border:3px solid #555;border-radius:8px;background:#87CEEB;display:block;touch-action:none}
+#ui{display:flex;justify-content:space-between;width:100%;padding:8px 12px;color:#fff;font-size:18px;font-weight:bold;background:#333;border-radius:0 0 8px 8px;margin-top:-3px}
+#restart{background:#f90;color:#222;border:none;padding:4px 16px;border-radius:4px;font-weight:bold;cursor:pointer;font-size:16px}
+#restart:hover{background:#ffb347}
+#info{color:#aaa;font-size:14px;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="game">
+<canvas id="c" width="600" height="400"></canvas>
+<div id="ui"><span>Score: <span id="score">0</span></span><button id="restart">↻</button></div>
+<div id="info">SPACE / UP / TAP to jump — avoid gaps!</div>
+</div>
+<script>
+(function(){
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreSpan=document.getElementById('score');
+const W=600,H=400;
+
+// --- Game state ---
+let score=0;
+let gameOver=false;
+let platforms=[];
+let cat={x:80,y:300,vx:0,vy:0,w:28,h:28,onGround:false,jumps:2,maxJumps:2};
+let gravity=980;
+let jumpSpeed=-420;
+let moveSpeed=200;
+let groundY=340;
+let cameraX=0;
+let scrollSpeed=120;
+let basePlatformWidth=70;
+let gapChance=0.35;
+let minGap=30,maxGap=70;
+let minPlatformWidth=50,maxPlatformWidth=120;
+let spawnX=0;
+let nextPlatformX=0;
+
+// Input
+let keys={};
+let jumpPressed=false;
+let touchActive=false;
+
+// --- Platform generation ---
+function initPlatforms(){
+platforms=[];
+score=0;
+gameOver=false;
+cameraX=0;
+spawnX=0;
+nextPlatformX=0;
+cat.x=80;cat.y=300;cat.vx=0;cat.vy=0;cat.onGround=false;cat.jumps=2;
+// initial platforms
+for(let i=0;i<6;i++){
+addPlatform();
+}
+// ensure first platform under cat
+if(platforms.length>0){
+platforms[0].x=20;
+platforms[0].y=groundY;
+platforms[0].w=120;
+platforms[0].h=14;
+}
+updateScore();
+}
+
+function addPlatform(){
+let last=platforms[platforms.length-1];
+let startX=last?last.x+last.w:20;
+let gap=0;
+if(platforms.length>0 && Math.random()<gapChance){
+gap=minGap+Math.random()*(maxGap-minGap);
+}
+let w=minPlatformWidth+Math.random()*(maxPlatformWidth-minPlatformWidth);
+let y=groundY;
+// slight height variation
+if(Math.random()<0.3){
+y=groundY-20-Math.random()*30;
+}
+let plat={x:startX+gap,y:y,w:w,h:14,scored:false};
+platforms.push(plat);
+nextPlatformX=plat.x+plat.w;
+}
+
+function updatePlatforms(dt){
+// generate more platforms
+while(nextPlatformX-cameraX<W+100){
+addPlatform();
+}
+// remove off-screen left
+while(platforms.length>0 && platforms[0].x+platforms[0].w<cameraX-50){
+platforms.shift();
+}
+// scoring: mark platforms passed
+for(let p of platforms){
+if(!p.scored && p.x+p.w<cat.x-20){
+p.scored=true;
+score++;
+updateScore();
+}
+}
+}
+
+// --- Cat physics ---
+function updateCat(dt){
+let moveX=0;
+if(keys['ArrowLeft']||keys['a']||keys['A']){moveX=-1;}
+if(keys['ArrowRight']||keys['d']||keys['D']){moveX=1;}
+if(touchActive){moveX=0;} // touch auto-scroll
+
+cat.vx=moveX*moveSpeed;
+// auto-scroll if not moving
+if(moveX===0 && !gameOver){
+cat.vx=scrollSpeed*0.6;
+}
+
+// gravity
+cat.vy+=gravity*dt;
+
+// horizontal
+cat.x+=cat.vx*dt;
+// vertical
+cat.y+=cat.vy*dt;
+
+// platform collision
+cat.onGround=false;
+for(let p of platforms){
+// check if cat is above platform
+if(cat.vy>=0 && cat.x+cat.w>p.x && cat.x<p.x+p.w){
+let catBottom=cat.y+cat.h;
+let platTop=p.y;
+if(catBottom>=platTop && catBottom<=platTop+20+Math.abs(cat.vy)*dt*0.5){
+let prevBottom=catBottom-cat.vy*dt;
+if(prevBottom<=platTop+5){
+cat.y=platTop-cat.h;
+cat.vy=0;
+cat.onGround=true;
+cat.jumps=cat.maxJumps;
+}
+}
+}
+}
+
+// boundaries
+if(cat.x<0){cat.x=0;cat.vx=0;}
+if(cat.x+cat.w>cameraX+W+50){cat.x=cameraX+W-50;cat.vx=0;}
+
+// fall off screen
+if(cat.y>H+50){
+gameOver=true;
+cat.vy=0;
+cat.vx=0;
+}
+
+// camera follow
+let targetCam=cat.x-W*0.35;
+cameraX=Math.max(0,targetCam);
+}
+
+// --- Jump ---
+function doJump(){
+if(gameOver) return;
+if(cat.jumps>0){
+cat.vy=jumpSpeed;
+cat.jumps--;
+cat.onGround=false;
+}
+}
+
+// --- Drawing ---
+function draw(){
+ctx.clearRect(0,0,W,H);
+ctx.save();
+ctx.translate(-cameraX,0);
+
+// sky gradient
+let grad=ctx.createLinearGradient(0,0,0,H);
+grad.addColorStop(0,'#87CEEB');
+grad.addColorStop(0.7,'#B0E0E6');
+grad.addColorStop(1,'#90EE90');
+ctx.fillStyle=grad;
+ctx.fillRect(cameraX-10,0,W+20,H);
+
+// clouds (simple)
+ctx.fillStyle='rgba(255,255,255,0.5)';
+for(let i=0;i<3;i++){
+let cx=200+i*250+Math.sin(Date.now()*0.0003+i)*30;
+ctx.beginPath();
+ctx.arc(cx-cameraX*0.1,60+i*30,30,0,Math.PI*2);
+ctx.arc(cx+30-cameraX*0.1,50+i*30,25,0,Math.PI*2);
+ctx.arc(cx-20-cameraX*0.1,70+i*30,22,0,Math.PI*2);
+ctx.fill();
+}
+
+// platforms
+for(let p of platforms){
+if(p.x+p.w<cameraX-20||p.x>cameraX+W+20)continue;
+ctx.fillStyle='#8B4513';
+ctx.fillRect(p.x,p.y,p.w,p.h);
+ctx.fillStyle='#A0522D';
+ctx.fillRect(p.x+2,p.y-2,p.w-4,6);
+// grass tufts
+ctx.fillStyle='#228B22';
+for(let i=0;i<3;i++){
+let gx=p.x+10+i*(p.w/4);
+ctx.fillRect(gx,p.y-4,3,4);
+}
+}
+
+// cat (procedural)
+ctx.save();
+ctx.translate(cat.x+cat.w/2,cat.y+cat.h/2);
+// body
+ctx.fillStyle='#FF8C00';
+ctx.beginPath();
+ctx.ellipse(0,4,14,12,0,0,Math.PI*2);
+ctx.fill();
+// head
+ctx.fillStyle='#FF8C00';
+ctx.beginPath();
+ctx.arc(10,-6,10,0,Math.PI*2);
+ctx.fill();
+// ears
+ctx.fillStyle='#FF6600';
+ctx.beginPath();
+ctx.moveTo(6,-14);
+ctx.lineTo(2,-24);
+ctx.lineTo(12,-18);
+ctx.fill();
+ctx.beginPath();
+ctx.moveTo(14,-14);
+ctx.lineTo(18,-24);
+ctx.lineTo(10,-18);
+ctx.fill();
+// inner ears
+ctx.fillStyle='#FFB07C';
+ctx.beginPath();
+ctx.moveTo(7,-16);
+ctx.lineTo(5,-22);
+ctx.lineTo(11,-18);
+ctx.fill();
+ctx.beginPath();
+ctx.moveTo(13,-16);
+ctx.lineTo(15,-22);
+ctx.lineTo(11,-18);
+ctx.fill();
+// eyes
+ctx.fillStyle='#222';
+ctx.beginPath();
+ctx.arc(13,-8,2.5,0,Math.PI*2);
+ctx.arc(7,-8,2.5,0,Math.PI*2);
+ctx.fill();
+// pupils
+ctx.fillStyle='#fff';
+ctx.beginPath();
+ctx.arc(14,-9,1,0,Math.PI*2);
+ctx.arc(8,-9,1,0,Math.PI*2);
+ctx.fill();
+// nose
+ctx.fillStyle='#FF69B4';
+ctx.beginPath();
+ctx.arc(10,-4,1.5,0,Math.PI*2);
+ctx.fill();
+// whiskers
+ctx.strokeStyle='#555';
+ctx.lineWidth=0.8;
+ctx.beginPath();
+ctx.moveTo(5,-5);ctx.lineTo(-2,-8);
+ctx.moveTo(5,-3);ctx.lineTo(-2,-3);
+ctx.moveTo(5,-1);ctx.lineTo(-2,2);
+ctx.moveTo(15,-5);ctx.lineTo(22,-8);
+ctx.moveTo(15,-3);ctx.lineTo(22,-3);
+ctx.moveTo(15,-1);ctx.lineTo(22,2);
+ctx.stroke();
+// tail
+ctx.strokeStyle='#FF8C00';
+ctx.lineWidth=4;
+ctx.lineCap='round';
+ctx.beginPath();
+ctx.moveTo(-10,6);
+let tailWag=Math.sin(Date.now()*0.01)*0.5;
+ctx.quadraticCurveTo(-18,0-tailWag*8,-12,-12-tailWag*6);
+ctx.stroke();
+ctx.restore();
+
+// ground line (visual)
+ctx.strokeStyle='#5a3a1a';
+ctx.lineWidth=2;
+ctx.beginPath();
+ctx.moveTo(cameraX-10,groundY+14);
+ctx.lineTo(cameraX+W+10,groundY+14);
+ctx.stroke();
+
+ctx.restore();
+
+// game over overlay
+if(gameOver){
+ctx.fillStyle='rgba(0,0,0,0.5)';
+ctx.fillRect(0,0,W,H);
+ctx.fillStyle='#fff';
+ctx.font='bold 40px sans-serif';
+ctx.textAlign='center';
+ctx.fillText('GAME OVER',W/2,H/2-20);
+ctx.font='20px sans-serif';
+ctx.fillText('Tap or press SPACE to restart',W/2,H/2+30);
+}
+}
+
+// --- UI ---
+function updateScore(){
+scoreSpan.textContent=score;
+}
+
+// --- Game loop ---
+let lastTime=0;
+function loop(time){
+let dt=Math.min((time-lastTime)/1000,0.05);
+lastTime=time;
+if(!gameOver){
+updateCat(dt);
+updatePlatforms(dt);
+// auto-scroll camera
+cameraX+=scrollSpeed*dt*0.3;
+}
+draw();
+requestAnimationFrame(loop);
+}
+
+// --- Input ---
+document.addEventListener('keydown',e=>{
+keys[e.key]=true;
+if(e.key===' '||e.key==='Space'||e.key==='ArrowUp'||e.key==='w'||e.key==='W'){
+e.preventDefault();
+doJump();
+}
+if(e.key==='r'||e.key==='R'){initPlatforms();}
+});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+c.addEventListener('touchstart',e=>{
+e.preventDefault();
+touchActive=true;
+doJump();
+});
+c.addEventListener('touchend',e=>{
+e.preventDefault();
+touchActive=false;
+});
+c.addEventListener('touchcancel',e=>{touchActive=false;});
+c.addEventListener('mousedown',e=>{
+e.preventDefault();
+doJump();
+});
+
+document.getElementById('restart').addEventListener('click',initPlatforms);
+document.getElementById('restart').addEventListener('touchstart',e=>{
+e.preventDefault();
+initPlatforms();
+});
+
+// Start
+initPlatforms();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

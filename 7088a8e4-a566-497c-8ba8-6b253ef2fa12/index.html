@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>时光回溯 · 平台穿梭</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d0d1a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; }
+canvas { display: block; background: #0f0f23; border-radius: 8px; box-shadow: 0 0 40px rgba(78, 204, 163, 0.15); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// === 游戏尺寸 ===
+const W = 800, H = 500;
+canvas.width = W; canvas.height = H;
+
+// === 物理常量 ===
+const GRAVITY = 0.55;
+const JUMP_FORCE = -11.5;
+const MOVE_SPEED = 4.8;
+
+// === 输入 ===
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'r' || e.key === 'R') { if (gameOver || gameWon) restart(); }
+  if (e.key === 'Shift' || e.key === 'q' || e.key === 'Q') {
+    if (!gameOver && !gameWon && !isRewinding && timeEnergy > 0 && rewindCooldown <= 0) {
+      startRewind();
+    }
+  }
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// 触摸支持
+let touchLeft = false, touchRight = false, touchJump = false, touchRewind = false;
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const rect = canvas.getBoundingClientRect();
+    const tx = (t.clientX - rect.left) / rect.width * W;
+    const ty = (t.clientY - rect.top) / rect.height * H;
+    if (ty > H * 0.55) {
+      if (tx < W * 0.35) touchLeft = true;
+      else if (tx < W * 0.65) touchJump = true;
+      else touchRight = true;
+    } else {
+      if (tx < W * 0.5) touchLeft = true;
+      else touchRight = true;
+    }
+    if (t.touches && t.touches.length >= 2) touchRewind = true;
+  }
+  if (touchRewind && timeEnergy > 0 && !isRewinding && rewindCooldown <= 0 && !gameOver && !gameWon) {
+    startRewind();
+  }
+});
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  touchLeft = false; touchRight = false; touchJump = false; touchRewind = false;
+  for (const t of e.changedTouches) {
+    const rect = canvas.getBoundingClientRect();
+    const tx = (t.clientX - rect.left) / rect.width * W;
+    const ty = (t.clientY - rect.top) / rect.height * H;
+    if (ty > H * 0.55) {
+      if (tx < W * 0.35) touchLeft = true;
+      else if (tx < W * 0.65) touchJump = true;
+      else touchRight = true;
+    } else {
+      if (tx < W * 0.5) touchLeft = true;
+      else touchRight = true;
+    }
+  }
+  if (e.touches.length >= 2 && timeEnergy > 0 && !isRewinding && rewindCooldown <= 0 && !gameOver && !gameWon) {
+    touchRewind = true;
+    startRewind();
+  }
+});
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  touchLeft = false; touchRight = false; touchJump = false; touchRewind = false;
+  for (const t of e.changedTouches) {
+    if (e.touches.length === 0) { touchLeft = false; touchRight = false; touchJump = false; }
+  }
+});
+
+// === 玩家 ===
+const player = {
+  x: 60, y: 380, w: 28, h: 34,
+  vx: 0, vy: 0,
+  onGround: false,
+  hp: 3, maxHp: 3,
+  invincible: 0
+};
+
+// === 时间倒流系统 ===
+const MAX_HISTORY = 100;
+let positionHistory = [];
+let isRewinding = false;
+let rewindProgress = 0; // 0~1
+let rewindTargetIndex = 0;
+let timeEnergy = 3;
+let maxTimeEnergy = 5;
+let rewindCooldown = 0;
+let rewindFlash = 0;
+
+function startRewind() {
+  if (positionHistory.length < 15) return;
+  isRewinding = true;
+  rewindProgress = 0;
+  rewindTargetIndex = Math.max(0, positionHistory.length - 45);
+  timeEnergy--;
+  rewindCooldown = 30;
+  rewindFlash = 12;
+}
+
+// === 关卡数据 ===
+// 平台: {x, y, w, h, durability, maxDurability, broken, respawnTimer}
+const platforms = [];
+function initPlatforms() {
+  platforms.length = 0;
+  // 地面 (有缺口)
+  platforms.push({ x: 0, y: 470, w: 180, h: 30, durability: 9999, maxDurability: 9999, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 300, y: 470, w: 200, h: 30, durability: 9999, maxDurability: 9999, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 580, y: 470, w: 220, h: 30, durability: 9999, maxDurability: 9999, broken: false, respawnTimer: 0 });
+  // 空中平台 (会崩塌)
+  platforms.push({ x: 120, y: 390, w: 90, h: 14, durability: 100, maxDurability: 100, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 280, y: 330, w: 100, h: 14, durability: 80, maxDurability: 80, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 440, y: 280, w: 110, h: 14, durability: 90, maxDurability: 90, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 600, y: 340, w: 100, h: 14, durability: 70, maxDurability: 70, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 720, y: 300, w: 70, h: 14, durability: 60, maxDurability: 60, broken: false, respawnTimer: 0 });
+  // 额外高台
+  platforms.push({ x: 50, y: 280, w: 70, h: 14, durability: 60, maxDurability: 60, broken: false, respawnTimer: 0 });
+  platforms.push({ x: 360, y: 200, w: 80, h: 14, durability: 50, maxDurability: 50, broken: false, respawnTimer: 0 });
+}
+
+// 时光碎片
+const shards = [];
+function initShards() {
+  shards.length = 0;
+  const positions = [
+    [160, 365], [310, 305], [340, 175], [470, 255], [630, 315], [750, 275], [80, 255]
+  ];
+  for (const [x, y] of positions) {
+    shards.push({ x, y, w: 16, h: 16, collected: false });
+  }
+}
+
+// 陷阱 (尖刺)
+const traps = [];
+function initTraps() {
+  traps.length = 0;
+  // 地面缺口处的尖刺
+  traps.push({ x: 180, y: 458, w: 120, h: 12 });
+  traps.push({ x: 500, y: 458, w: 80, h: 12 });
+  // 平台下方的尖刺
+  traps.push({ x: 270, y: 400, w: 20, h: 10 });
+  traps.push({ x: 430, y: 350, w: 20, h: 10 });
+  traps.push({ x: 610, y: 410, w: 20, h: 10 });
+}
+
+// 终点
+const goal = { x: 750, y: 430, w: 30, h: 38 };
+
+let score = 0;
+let gameOver = false;
+let gameWon = false;
+let gameTimer = 0;
+
+// 粒子系统
+const particles = [];
+
+function addParticles(x, y, color, count = 8, speed = 3) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = Math.random() * speed + 0.5;
+    particles.push({
+      x, y, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
+      life: 1, decay: Math.random() * 0.03 + 0.02, size: Math.random() * 4 + 2, color
+    });
+  }
+}
+
+// === 初始化 ===
+function restart() {
+  player.x = 60; player.y = 380;
+  player.vx = 0; player.vy = 0;
+  player.hp = player.maxHp;
+  player.invincible = 0;
+  player.onGround = false;
+  positionHistory = [];
+  isRewinding = false;
+  rewindProgress = 0;
+  timeEnergy = 3;
+  rewindCooldown = 0;
+  rewindFlash = 0;
+  score = 0;
+  gameOver = false;
+  gameWon = false;
+  gameTimer = 0;
+  particles.length = 0;
+  initPlatforms();
+  initShards();
+  initTraps();
+}
+
+initPlatforms();
+initShards();
+initTraps();
+
+// === 更新逻辑 ===
+function update() {
+  if (gameOver || gameWon) return;
+
+  gameTimer++;
+
+  // 更新冷却
+  if (rewindCooldown > 0) rewindCooldown--;
+  if (rewindFlash > 0) rewindFlash--;
+
+  // ---- 时间倒流模式 ----
+  if (isRewinding) {
+    rewindProgress += 0.045;
+    if (rewindProgress >= 1 || rewindTargetIndex >= positionHistory.length - 1) {
+      isRewinding = false;
+      if (positionHistory.length > 0) {
+        const state = positionHistory[Math.min(rewindTargetIndex, positionHistory.length - 1)];
+        player.x = state.x; player.y = state.y;
+        player.vx = 0; player.vy = 0;
+        player.onGround = true;
+      }
+      positionHistory = [];
+      addParticles(player.x + player.w/2, player.y + player.h/2, '#4ecca3', 20, 5);
+      return;
+    }
+    const idx = Math.floor(rewindTargetIndex + (positionHistory.length - 1 - rewindTargetIndex) * rewindProgress);
+    const idxClamped = Math.min(idx, positionHistory.length - 1);
+    if (idxClamped >= 0 && idxClamped < positionHistory.length) {
+      const state = positionHistory[idxClamped];
+      player.x = state.x; player.y = state.y;
+      player.vx = 0; player.vy = 0;
+      player.onGround = true;
+    }
+    // 倒流时粒子特效
+    if (gameTimer % 2 === 0) {
+      addParticles(player.x + player.w/2 + (Math.random()-0.5)*20, player.y + player.h/2 + (Math.random()-0.5)*20, '#7effdb', 1, 1.5);
+    }
+    return;
+  }
+
+  // ---- 记录历史 ----
+  positionHistory.push({
+    x: player.x, y: player.y, vx: player.vx, vy: player.vy, onGround: player.onGround
+  });
+  if (positionHistory.length > MAX_HISTORY) positionHistory.shift();
+
+  // ---- 输入 ----
+  let moveX = 0;
+  if (keys['ArrowLeft'] || keys['a'] || keys['A'] || touchLeft) moveX = -1;
+  if (keys['ArrowRight'] || keys['d'] || keys['D'] || touchRight) moveX = 1;
+  player.vx = moveX * MOVE_SPEED;
+
+  const jumpKey = keys['ArrowUp'] || keys['w'] || keys['W'] || keys[' '] || touchJump;
+  if (jumpKey && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+    addParticles(player.x + player.w/2, player.y + player.h, '#a0a0c0', 5, 2);
+  }
+
+  // ---- 物理 ----
+  player.vy += GRAVITY;
+  if (player.vy > 16) player.vy = 16;
+
+  // 水平碰撞
+  player.x += player.vx;
+  for (const p of platforms) {
+    if (p.broken) continue;
+    if (player.x < p.x + p.w && player.x + player.w > p.x &&
+        player.y < p.y + p.h && player.y + player.h > p.y) {
+      if (player.vx > 0) player.x = p.x - player.w;
+      else if (player.vx < 0) player.x = p.x + p.w;
+    }
+  }
+
+  // 垂直碰撞 + 平台耐久度
+  player.y += player.vy;
+  player.onGround = false;
+  for (const p of platforms) {
+    if (p.broken) continue;
+    if (player.x < p.x + p.w && player.x + player.w > p.x &&
+        player.y < p.y + p.h && player.y + player.h > p.y) {
+      if (player.vy > 0) {
+        player.y = p.y - player.h;
+        player.onGround = true;
+        // 站在平台上减少耐久度
+        if (p.durability < 9999) {
+          p.durability -= 0.8;
+          if (p.durability <= 0) {
+            p.broken = true;
+            p.respawnTimer = 180; // 3秒后重生
+            addParticles(p.x + p.w/2, p.y + p.h/2, '#e94560', 15, 4);
+          }
+        }
+      } else if (player.vy < 0) {
+        player.y = p.y + p.h;
+      }
+      player.vy = 0;
+    }
+  }
+
+  // 平台重生
+  for (const p of platforms) {
+    if (p.broken && p.respawnTimer > 0) {
+      p.respawnTimer--;
+      if (p.respawnTimer === 0) {
+        p.broken = false;
+        p.durability = p.maxDurability;
+        addParticles(p.x + p.w/2, p.y + p.h/2, '#4ecca3', 10, 3);
+      }
+    }
+  }
+
+  // 边界
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > W) player.x = W - player.w;
+
+  // 掉落
+  if (player.y > H + 60) {
+    player.hp--;
+    if (player.hp <= 0) { gameOver = true; return; }
+    player.x = 60; player.y = 380;
+    player.vx = 0; player.vy = 0;
+    player.invincible = 60;
+    addParticles(player.x + player.w/2, player.y + player.h/2, '#ff6b6b', 12, 4);
+  }
+
+  // 无敌计时
+  if (player.invincible > 0) player.invincible--;
+
+  // ---- 时光碎片收集 ----
+  for (const s of shards) {
+    if (s.collected) continue;
+    if (player.x < s.x + s.w && player.x + player.w > s.x &&
+        player.y < s.y + s.h && player.y + player.h > s.y) {
+      s.collected = true;
+      score += 150;
+      if (timeEnergy < maxTimeEnergy) timeEnergy++;
+      addParticles(s.x + s.w/2, s.y + s.h/2, '#ffd700', 20, 5);
+    }
+  }
+
+  // ---- 陷阱碰撞 ----
+  for (const t of traps) {
+    if (player.invincible > 0) continue;
+    if (player.x < t.x + t.w && player.x + player.w > t.x &&
+        player.y < t.y + t.h && player.y + player.h > t.y) {
+      player.hp--;
+      player.invincible = 50;
+      player.vy = JUMP_FORCE * 0.7;
+      addParticles(player.x + player.w/2, player.y + player.h/2, '#ff3333', 15, 5);
+      if (player.hp <= 0) { gameOver = true; return; }
+    }
+  }
+
+  // ---- 终点 ----
+  if (player.x < goal.x + goal.w && player.x + player.w > goal.x &&
+      player.y < goal.y + goal.h && player.y + player.h > goal.y) {
+    gameWon = true;
+    addParticles(goal.x + goal.w/2, goal.y + goal.h/2, '#4ecca3', 30, 6);
+  }
+
+  // 更新粒子
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const pt = particles[i];
+    pt.x += pt.vx; pt.y += pt.vy;
+    pt.vy += 0.05;
+    pt.life -= pt.decay;
+    if (pt.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// === 绘制 ===
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // ---- 背景 ----
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0b0b1a');
+  grad.addColorStop(0.5, '#12122a');
+  grad.addColorStop(1, '#0f0f23');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // 背景星星
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  for (let i = 0; i < 50; i++) {
+    const sx = (i * 137.5 + 50) % W;
+    const sy = (i * 89.3 + 20) % (H * 0.6);
+    const size = 1 + (i % 3);
+    ctx.fillRect(sx, sy, size, size);
+  }
+
+  // 背景时钟装饰
+  ctx.strokeStyle = 'rgba(78, 204, 163, 0.06)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    const cx = 150 + i * 280, cy = 120, r = 50;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 10, 0, Math.PI * 2);
+    ctx.stroke();
+    // 指针
+    const angle = gameTimer * 0.005 + i * 2.1;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * (r - 8), cy + Math.sin(angle) * (r - 8));
+    ctx.stroke();
+  }
+
+  // ---- 平台 ----
+  for (const p of platforms) {
+    if (p.broken) {
+      // 破碎效果 - 残留粒子
+      if (p.respawnTimer > 0 && p.respawnTimer % 30 < 15) {
+        ctx.fillStyle = 'rgba(233, 69, 96, 0.1)';
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+      continue;
+    }
+    // 平台主体
+    const durabilityRatio = p.durability / p.maxDurability;
+    const r = 50 + (1 - durabilityRatio) * 40;
+    const g = 140 + (1 - durabilityRatio) * 30;
+    const b = 120 - (1 - durabilityRatio) * 50;
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+
+    // 顶部光泽
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.15 + durabilityRatio * 0.1})`;
+    ctx.fillRect(p.x, p.y, p.w, 3);
+
+    // 耐久度裂纹
+    if (durabilityRatio < 0.7) {
+      ctx.strokeStyle = `rgba(200, 60, 60, ${0.3 + (1 - durabilityRatio) * 0.5})`;
+      ctx.lineWidth = 1.5;
+      const crackCount = Math.floor((1 - durabilityRatio) * 5) + 1;
+      for (let i = 0; i < crackCount; i++) {
+        const cx = p.x + 10 + (i * 17) % (p.w - 20);
+        const cy = p.y + 4 + (i * 7) % 6;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + 6 + (i * 3) % 8, cy + 6 + (i * 2) % 5);
+        ctx.stroke();
+      }
+    }
+
+    // 边缘光
+    ctx.fillStyle = 'rgba(78, 204, 163, 0.08)';
+    ctx.fillRect(p.x, p.y + p.h - 2, p.w, 2);
+  }
+
+  // ---- 陷阱 ----
+  for (const t of traps) {
+    // 尖刺底座
+    ctx.fillStyle = '#3a1a1a';
+    ctx.fillRect(t.x, t.y + t.h - 3, t.w, 3);
+    // 尖刺
+    const spikeCount = Math.floor(t.w / 8);
+    ctx.fillStyle = '#e94560';
+    for (let i = 0; i < spikeCount; i++) {
+      const sx = t.x + i * (t.w / spikeCount) + 2;
+      const sy = t.y;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy + t.h);
+      ctx.lineTo(sx + 3, sy);
+      ctx.lineTo(sx + 6, sy + t.h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // 发光
+    ctx.fillStyle = 'rgba(233, 69, 96, 0.15)';
+    ctx.fillRect(t.x, t.y - 4, t.w, 4);
+  }
+
+  // ---- 时光碎片 ----
+  for (const s of shards) {
+    if (s.collected) continue;
+    const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
+    const pulse = Math.sin(gameTimer * 0.06 + s.x) * 2;
+    // 光晕
+    const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, 14 + pulse);
+    glow.addColorStop(0, 'rgba(255, 215, 0, 0.6)');
+    glow.addColorStop(0.5, 'rgba(255, 215, 0, 0.2)');
+    glow.addColorStop(1, 'rgba(255, 215, 0, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(cx - 16, cy - 16, 32, 32);
+
+    // 菱形主体
+    ctx.save();
+    ctx.translate(cx, cy + pulse * 0.3);
+    ctx.rotate(gameTimer * 0.02 + s.x * 0.01);
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(6, 0);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-6, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#fff8dc';
+    ctx.beginPath();
+    ctx.moveTo(0, -4);
+    ctx.lineTo(3, 0);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(-3, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ---- 终点 ----
+  const goalPulse = Math.sin(gameTimer * 0.05) * 0.15 + 1;
+  ctx.fillStyle = 'rgba(78, 204, 163, 0.15)';
+  ctx.fillRect(goal.x - 5, goal.y - 5, goal.w + 10, goal.h + 10);
+  ctx.fillStyle = '#2d6a5e';
+  ctx.fillRect(goal.x, goal.y, goal.w, goal.h);
+  ctx.fillStyle = '#4ecca3';
+  ctx.fillRect(goal.x + 3, goal.y + 3, goal.w - 6, goal.h - 6);
+  // 传送门光效
+  const gw = goal.w - 10;
+  const gh = goal.h - 10;
+  const gcx = goal.x + 5 + gw / 2;
+  const gcy = goal.y + 5 + gh / 2;
+  const grad2 = ctx.createRadialGradient(gcx, gcy, 2, gcx, gcy, 14 * goalPulse);
+  grad2.addColorStop(0, 'rgba(78, 204, 163, 0.7)');
+  grad2.addColorStop(0.5, 'rgba(78, 204, 163, 0.2)');
+  grad2.addColorStop(1, 'rgba(78, 204, 163, 0)');
+  ctx.fillStyle = grad2;
+  ctx.fillRect(gcx - 20, gcy - 20, 40, 40);
+
+  // ---- 玩家 ----
+  if (!gameOver && !gameWon) {
+    const px = player.x, py = player.y;
+    const flash = player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0;
+    if (flash) {
+      ctx.globalAlpha = 0.6;
+    }
+
+    // 玩家身体
+    const bodyColor = isRewinding ? '#7effdb' : '#4ecca3';
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(px + 2, py + 8, player.w - 4, player.h - 12);
+
+    // 头部
+    ctx.fillStyle = '#3db89a';
+    ctx.fillRect(px + 4, py + 2, player.w - 8, 10);
+
+    // 眼睛
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(px + 7, py + 4, 5, 5);
+    ctx.fillRect(px + 16, py + 4, 5, 5);
+    ctx.fillStyle = '#1a1a2e';
+    const lookDir = player.vx > 0 ? 1 : player.vx < 0 ? -1 : 0;
+    ctx.fillRect(px + 8 + lookDir, py + 5, 3, 3);
+    ctx.fillRect(px + 17 + lookDir, py + 5, 3, 3);
+
+    // 时间沙漏标志 (胸口)
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.7)';
+    ctx.fillRect(px + 11, py + 13, 6, 8);
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(px + 12, py + 14, 4, 2);
+    ctx.fillRect(px + 12, py + 18, 4, 2);
+
+    // 腿
+    ctx.fillStyle = '#2d8a72';
+    ctx.fillRect(px + 5, py + player.h - 8, 7, 8);
+    ctx.fillRect(px + 16, py + player.h - 8, 7, 8);
+
+    // 鞋子
+    ctx.fillStyle = '#1a5a4a';
+    ctx.fillRect(px + 3, py + player.h - 4, 9, 4);
+    ctx.fillRect(px + 16, py + player.h - 4, 9, 4);
+
+    ctx.globalAlpha = 1;
+
+    // 时间倒流光环
+    if (isRewinding) {
+      ctx.strokeStyle = `rgba(126, 255, 219, ${0.3 + Math.sin(gameTimer * 0.2) * 0.2})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px + player.w / 2, py + player.h / 2, 22 + Math.sin(gameTimer * 0.15) * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(px + player.w / 2, py + player.h / 2, 28 + Math.cos(gameTimer * 0.12) * 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // 轨迹显示 (按Q时)
+    if (keys['Shift'] || keys['q'] || keys['Q'] || touchRewind) {
+      ctx.fillStyle = 'rgba(78, 204, 163, 0.08)';
+      for (let i = 0; i < positionHistory.length; i += 3) {
+        const s = positionHistory[i];
+        ctx.fillRect(s.x + 1, s.y + 1, player.w - 2, player.h - 2);
+      }
+    }
+  }
+
+  // ---- 粒子 ----
+  for (const pt of particles) {
+    ctx.globalAlpha = pt.life;
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- HUD ----
+  // 生命值
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(8, 8, 140, 28);
+  ctx.fillStyle = '#fff';
+  ctx.font = '15px sans-serif';
+  let hpStr = '';
+  for (let i = 0; i < player.maxHp; i++) {
+    hpStr += i < player.hp ? '❤️' : '🖤';
+  }
+  ctx.fillText(hpStr, 16, 28);
+
+  // 时间能量
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(158, 8, 140, 28);
+  ctx.fillStyle = '#ffd700';
+  ctx.font = '14px sans-serif';
+  let energyStr = '⏳ ';
+  for (let i = 0; i < maxTimeEnergy; i++) {
+    energyStr += i < timeEnergy ? '◆' : '◇';
+  }
+  ctx.fillText(energyStr, 166, 28);
+
+  // 分数
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(308, 8, 120, 28);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('⭐ ' + score, 316, 28);
+
+  // 操作提示
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('← → 移动 | ↑/空格 跳跃 | Shift/Q 时间倒流', 440, 22);
+
+  // 倒流冷却指示
+  if (rewindCooldown > 0) {
+    ctx.fillStyle = 'rgba(233, 69, 96, 0.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('⏱ 冷却 ' + Math.ceil(rewindCooldown / 10) + 's', W - 110, 22);
+  }
+
+  // ---- 结束画面 ----
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#e94560';
+    ctx.font = 'bold 42px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⏰ 时光耗尽', W / 2, H / 2 - 20);
+    ctx.font = '18px sans-serif';
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('按 R 重新开始  ·  收集时光碎片获得能量', W / 2, H / 2 + 40);
+    ctx.textAlign = 'left';
+  }
+
+  if (gameWon) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#4ecca3';
+    ctx.font = 'bold 42px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⌛ 时空穿越成功！', W / 2, H / 2 - 20);
+    ctx.font = '20px sans-serif';
+    ctx.fillStyle = '#ffd700';
+    ctx.fillText('⭐ 最终得分: ' + score, W / 2, H / 2 + 30);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('按 R 再次挑战', W / 2, H / 2 + 70);
+    ctx.textAlign = 'left';
+    // 胜利粒子
+    if (gameTimer % 3 === 0) {
+      addParticles(Math.random() * W, Math.random() * H, ['#4ecca3', '#ffd700', '#7effdb'][Math.floor(Math.random() * 3)], 2, 2);
+    }
+  }
+
+  // 倒流闪屏效果
+  if (rewindFlash > 0) {
+    ctx.fillStyle = `rgba(78, 204, 163, ${rewindFlash * 0.008})`;
+    ctx.fillRect(0, 0, W, H);
+    // 时间扭曲线条
+    ctx.strokeStyle = `rgba(126, 255, 219, ${rewindFlash * 0.01})`;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 8; i++) {
+      const ly = (i * 70 + gameTimer * 2) % H;
+      ctx.beginPath();
+      ctx.moveTo(0, ly + Math.sin(gameTimer * 0.05 + i) * 15);
+      ctx.quadraticCurveTo(W / 2, ly + Math.sin(gameTimer * 0.08 + i * 0.7) * 30, W, ly + Math.sin(gameTimer * 0.06 + i * 0.5) * 15);
+      ctx.stroke();
+    }
+  }
+}
+
+// === 游戏循环 ===
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
+// === 响应式 ===
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.style.width = (W * scale * 0.95) + 'px';
+  canvas.style.height = (H * scale * 0.95) + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>

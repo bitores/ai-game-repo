@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  游戏以6x6网格为棋盘，每个格子随机放置金、木、水、火、土五种属性的方块。玩家通过触屏滑动（或键盘方向键）控制一个光标，每次只能选中一个与光标相邻的方块，将其推入相邻的空格（类似推箱子）。当三个或以上相同属性的方块在横向或纵向连续排列时，它们会立即消除并计分，消除后上方方块掉落填补空缺。游戏会持续在顶部生成新方块。胜利条件：在60秒内累计达到500分，否则失败。视觉风格采用水墨国风，方块上刻有对应的五行汉字和颜色渐变，背景有山水墨韵，反馈音效为古琴拨弦。操作方式明确支持触屏点击拖动或键盘方向键控制光标移动与推动。
+-->
+<meta name="description" content="游戏以6x6网格为棋盘，每个格子随机放置金、木、水、火、土五种属性的方块。玩家通过触屏滑动（或键盘方向键）控制一个光标，每次只能选中一个与光标相邻的方块，将其推入相邻的空格（类似推箱子）。当三个或以上相同属性的方块在横向或纵向连续排列时，它们会立即消除并计分，消除后上方方块掉落填补空缺。游戏会持续在顶部生成新方块。胜利条件：在60秒内累计达到500分，否则失败。视觉风格采用水墨国风，方块上刻有对应的五行汉字和颜色渐变，背景有山水墨韵，反馈音效为古琴拨弦。操作方式明确支持触屏点击拖动或键盘方向键控制光标移动与推动。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>五行推推乐</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'STKaiti', 'KaiTi', 'SimSun', 'Noto Serif SC', serif;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas { display: block; background: #16213e; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+const W = 540, H = 680
+canvas.width = W
+canvas.height = H
+
+// ============ CONFIG ============
+const GRID_SIZE = 6
+const TILE_SIZE = 76
+const GAP = 5
+const BOARD_SIZE = GRID_SIZE * (TILE_SIZE + GAP) + GAP
+const OFFSET_X = (W - BOARD_SIZE) / 2
+const OFFSET_Y = 90
+const WIN_SCORE = 500
+const GAME_DURATION = 60
+
+const ELEMENTS = [
+  { name: '金', color1: '#FFD700', color2: '#B8860B', glow: 'rgba(255,215,0,0.5)' },
+  { name: '木', color1: '#2E8B57', color2: '#006400', glow: 'rgba(46,139,87,0.5)' },
+  { name: '水', color1: '#1E90FF', color2: '#00008B', glow: 'rgba(30,144,255,0.5)' },
+  { name: '火', color1: '#FF4500', color2: '#8B0000', glow: 'rgba(255,69,0,0.5)' },
+  { name: '土', color1: '#CD853F', color2: '#8B4513', glow: 'rgba(205,133,63,0.5)' },
+]
+
+// ============ STATE ============
+let grid = []          // 6x6: 0-4 for elements, -1 for empty
+let emptyR = 0, emptyC = 0
+let cursorR = 2, cursorC = 2
+let score = 0
+let timeLeft = GAME_DURATION
+let gameState = 'idle'    // 'idle', 'playing', 'won', 'lost'
+let timerAccum = 0
+let isAnimating = false
+let particles = []
+let animatingCells = []   // cells with animation offsets [{r, c, offX, offY, scale}]
+let removingCells = []    // cells being removed [{r, c, scale, opacity}]
+let scorePopup = null     // {text, x, y, opacity, vy}
+let comboCount = 0
+
+// Touch state
+let touchStartX = 0, touchStartY = 0
+let touchMoved = false
+let cursorTargetX = -1, cursorTargetY = -1
+let cursorAnimProgress = 1
+
+// Audio
+let audioCtx = null
+
+// ============ AUDIO (古琴) ============
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+}
+
+function playGuqinNote(freq, duration, volume = 0.15, delay = 0) {
+  initAudio()
+  const now = audioCtx.currentTime + delay
+  const harmonics = [
+    { freq, gain: 0.5, type: 'sine' },
+    { freq: freq * 2.01, gain: 0.15, type: 'sine' },
+    { freq: freq * 3.02, gain: 0.08, type: 'sine' },
+    { freq: freq * 0.5, gain: 0.12, type: 'triangle' },
+  ]
+  harmonics.forEach(h => {
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.type = h.type
+    osc.frequency.setValueAtTime(h.freq, now)
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(volume * h.gain, now + 0.008)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration)
+    osc.start(now)
+    osc.stop(now + duration)
+  })
+  // Attack noise (fingertip pluck)
+  const bufSize = Math.floor(audioCtx.sampleRate * 0.015)
+  const buffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize)
+  const noise = audioCtx.createBufferSource()
+  const ng = audioCtx.createGain()
+  noise.buffer = buffer
+  noise.connect(ng)
+  ng.connect(audioCtx.destination)
+  ng.gain.setValueAtTime(volume * 0.25, now)
+  ng.gain.exponentialRampToValueAtTime(0.001, now + 0.015)
+  noise.start(now)
+}
+
+function playPushSound() {
+  const notes = [98, 110, 130.81, 110, 146.83]
+  playGuqinNote(notes[Math.floor(Math.random() * notes.length)], 0.4, 0.1)
+}
+
+function playMatchSound(chainLevel) {
+  const baseNotes = [261.63, 293.66, 329.63, 392, 440]
+  const note = baseNotes[Math.min(chainLevel, baseNotes.length - 1)]
+  playGuqinNote(note, 0.6, 0.12)
+  if (chainLevel > 1) {
+    setTimeout(() => playGuqinNote(note * 1.5, 0.4, 0.08), 60)
+  }
+}
+
+function playWinSound() {
+  const melody = [392, 440, 493.88, 523.25, 587.33, 659.25, 783.99, 1046.5]
+  melody.forEach((freq, i) => {
+    setTimeout(() => playGuqinNote(freq, 0.5, 0.1), i * 70)
+  })
+}
+
+function playLoseSound() {
+  const notes = [293.66, 261.63, 220, 196, 174.61]
+  notes.forEach((freq, i) => {
+    setTimeout(() => playGuqinNote(freq, 0.6, 0.08), i * 120)
+  })
+}
+
+// ============ GAME INIT ============
+function initGame() {
+  grid = []
+  particles = []
+  animatingCells = []
+  removingCells = []
+  scorePopup = null
+  comboCount = 0
+  isAnimating = false
+
+  // Create grid ensuring no initial matches
+  for (let r = 0; r < GRID_SIZE; r++) {
+    grid[r] = []
+    for (let c = 0; c < GRID_SIZE; c++) {
+      let elem
+      do {
+        elem = Math.floor(Math.random() * 5)
+      } while (wouldMatch(r, c, elem))
+      grid[r][c] = elem
+    }
+  }
+
+  // Designate one random cell as empty
+  emptyR = Math.floor(Math.random() * GRID_SIZE)
+  emptyC = Math.floor(Math.random() * GRID_SIZE)
+  grid[emptyR][emptyC] = -1
+
+  cursorR = Math.min(emptyR + 1, GRID_SIZE - 1)
+  cursorC = Math.min(emptyC + 1, GRID_SIZE - 1)
+  if (cursorR === emptyR && cursorC === emptyC) cursorR = Math.max(emptyR - 1, 0)
+
+  score = 0
+  timeLeft = GAME_DURATION
+  gameState = 'idle'
+  timerAccum = 0
+  cursorAnimProgress = 1
+}
+
+function wouldMatch(row, col, elem) {
+  if (col >= 2 && grid[row][col - 1] === elem && grid[row][col - 2] === elem) return true
+  if (row >= 2 && grid[row - 1] && grid[row - 1][col] === elem &&
+      grid[row - 2] && grid[row - 2][col] === elem) return true
+  return false
+}
+
+// ============ CORE MECHANICS ============
+function pushBlock(r, c) {
+  if (gameState === 'won' || gameState === 'lost' || isAnimating) return false
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false
+  if (grid[r][c] < 0) return false
+
+  const dr = Math.abs(r - emptyR)
+  const dc = Math.abs(c - emptyC)
+  if (dr + dc !== 1) return false
+
+  // Start game on first action
+  if (gameState === 'idle') {
+    gameState = 'playing'
+    timerAccum = 0
+    timeLeft = GAME_DURATION
+  }
+
+  playPushSound()
+
+  // Animate the push
+  animatingCells.push({
+    r, c,
+    fromR: r, fromC: c,
+    toR: emptyR, toC: emptyC,
+    progress: 0,
+    elem: grid[r][c]
+  })
+
+  // Perform the push
+  grid[emptyR][emptyC] = grid[r][c]
+  grid[r][c] = -1
+  emptyR = r
+  emptyC = c
+
+  isAnimating = true
+
+  // After short delay, process matches
+  setTimeout(() => {
+    animatingCells = []
+    comboCount = 0
+    processMatches()
+  }, 120)
+
+  return true
+}
+
+function processMatches() {
+  if (gameState === 'won' || gameState === 'lost') {
+    isAnimating = false
+    return
+  }
+  const matches = findMatches()
+  if (matches.length === 0) {
+    isAnimating = false
+    // Make sure exactly one empty cell exists
+    ensureSingleEmpty()
+    if (!hasValidMoves()) {
+      reshuffle()
+    }
+    return
+  }
+
+  comboCount++
+  playMatchSound(comboCount)
+
+  // Calculate score with combo multiplier
+  const basePoints = matches.length * 10
+  const comboMultiplier = Math.min(comboCount, 5)
+  const points = basePoints * comboMultiplier
+  score += points
+
+  // Early win check
+  if (score >= WIN_SCORE && gameState === 'playing') {
+    gameState = 'won'
+    playWinSound()
+    isAnimating = false
+    return
+  }
+
+  // Show score popup
+  const centerR = matches.reduce((s, m) => s + m.r, 0) / matches.length
+  const centerC = matches.reduce((s, m) => s + m.c, 0) / matches.length
+  scorePopup = {
+    text: `+${points}` + (comboCount > 1 ? ` ×${comboCount}` : ''),
+    x: OFFSET_X + centerC * (TILE_SIZE + GAP) + TILE_SIZE / 2,
+    y: OFFSET_Y + centerR * (TILE_SIZE + GAP),
+    opacity: 1,
+    vy: -2,
+    scale: 0.5
+  }
+
+  // Spawn particles
+  matches.forEach(m => {
+    for (let i = 0; i < 8; i++) {
+      particles.push(createParticle(m.r, m.c, grid[m.r][m.c]))
+    }
+  })
+
+  // Create removing animation
+  matches.forEach(m => {
+    removingCells.push({
+      r: m.r, c: m.c,
+      scale: 1,
+      opacity: 1,
+      elem: grid[m.r][m.c]
+    })
+  })
+
+  // Remove matched cells and drop
+  setTimeout(() => {
+    matches.forEach(m => { grid[m.r][m.c] = -1 })
+    removingCells = []
+    dropAndFill()
+
+    // Check for chain matches
+    setTimeout(() => {
+      processMatches()
+    }, 180)
+  }, 250)
+}
+
+function findMatches() {
+  const matched = new Set()
+
+  // Horizontal
+  for (let r = 0; r < GRID_SIZE; r++) {
+    let streak = 1
+    for (let c = 1; c <= GRID_SIZE; c++) {
+      const val = c < GRID_SIZE ? grid[r][c] : -2
+      const prev = grid[r][c - 1]
+      if (val === prev && val >= 0) {
+        streak++
+      } else {
+        if (streak >= 3) {
+          for (let k = 0; k < streak; k++) matched.add(`${r},${c - 1 - k}`)
+        }
+        streak = 1
+      }
+    }
+  }
+
+  // Vertical
+  for (let c = 0; c < GRID_SIZE; c++) {
+    let streak = 1
+    for (let r = 1; r <= GRID_SIZE; r++) {
+      const val = r < GRID_SIZE ? grid[r][c] : -2
+      const prev = grid[r - 1][c]
+      if (val === prev && val >= 0) {
+        streak++
+      } else {
+        if (streak >= 3) {
+          for (let k = 0; k < streak; k++) matched.add(`${r - 1 - k},${c}`)
+        }
+        streak = 1
+      }
+    }
+  }
+
+  return Array.from(matched).map(key => {
+    const [r, c] = key.split(',').map(Number)
+    return { r, c }
+  })
+}
+
+function dropAndFill() {
+  for (let c = 0; c < GRID_SIZE; c++) {
+    let writeRow = GRID_SIZE - 1
+    for (let r = GRID_SIZE - 1; r >= 0; r--) {
+      if (grid[r][c] >= 0) {
+        if (writeRow !== r) {
+          grid[writeRow][c] = grid[r][c]
+          grid[r][c] = -1
+        }
+        writeRow--
+      }
+    }
+    // Fill remaining with new
+    for (let r = writeRow; r >= 0; r--) {
+      grid[r][c] = Math.floor(Math.random() * 5)
+    }
+  }
+}
+
+function ensureSingleEmpty() {
+  let emptyCount = 0
+  let lastEmptyR = -1, lastEmptyC = -1
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (grid[r][c] < 0) {
+        emptyCount++
+        lastEmptyR = r
+        lastEmptyC = c
+      }
+    }
+  }
+  if (emptyCount === 0) {
+    // Pick a random cell to become empty
+    const r = Math.floor(Math.random() * GRID_SIZE)
+    const c = Math.floor(Math.random() * GRID_SIZE)
+    grid[r][c] = -1
+    emptyR = r
+    emptyC = c
+  } else if (emptyCount > 1) {
+    // Keep only the designated empty, fill others
+    for (let r = 0; r < GRID_SIZE; r++) {
+      for (let c = 0; c < GRID_SIZE; c++) {
+        if (grid[r][c] < 0 && !(r === emptyR && c === emptyC)) {
+          grid[r][c] = Math.floor(Math.random() * 5)
+        }
+      }
+    }
+  } else {
+    emptyR = lastEmptyR
+    emptyC = lastEmptyC
+  }
+}
+
+function hasValidMoves() {
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (grid[r][c] >= 0) {
+        const dr = Math.abs(r - emptyR)
+        const dc = Math.abs(c - emptyC)
+        if (dr + dc === 1) return true
+      }
+    }
+  }
+  return false
+}
+
+function reshuffle() {
+  // Collect all element values
+  const elems = []
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (grid[r][c] >= 0) elems.push(grid[r][c])
+    }
+  }
+  // Shuffle and place (skip empty cell)
+  for (let i = elems.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[elems[i], elems[j]] = [elems[j], elems[i]]
+  }
+  let idx = 0
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (grid[r][c] >= 0) {
+        grid[r][c] = elems[idx++]
+      }
+    }
+  }
+  isAnimating = false
+}
+
+// ============ PARTICLES ============
+function createParticle(r, c, elem) {
+  const x = OFFSET_X + c * (TILE_SIZE + GAP) + TILE_SIZE / 2
+  const y = OFFSET_Y + r * (TILE_SIZE + GAP) + TILE_SIZE / 2
+  const angle = Math.random() * Math.PI * 2
+  const speed = 2 + Math.random() * 4
+  return {
+    x, y,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed - 2,
+    life: 1,
+    decay: 0.015 + Math.random() * 0.02,
+    size: 3 + Math.random() * 5,
+    elem
+  }
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]
+    p.x += p.vx
+    p.y += p.vy
+    p.vy += 0.08
+    p.life -= p.decay
+    if (p.life <= 0) particles.splice(i, 1)
+  }
+}
+
+// ============ INK-WASH BACKGROUND ============
+function drawInkBackground() {
+  // Base wash
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, H)
+  bgGrad.addColorStop(0, '#0a0a1a')
+  bgGrad.addColorStop(0.3, '#15202b')
+  bgGrad.addColorStop(0.6, '#1a2a30')
+  bgGrad.addColorStop(1, '#0d1b2a')
+  ctx.fillStyle = bgGrad
+  ctx.fillRect(0, 0, W, H)
+
+  // Distant mountains (ink wash layers)
+  ctx.save()
+  ctx.globalAlpha = 0.15
+
+  // Far mountains
+  ctx.fillStyle = '#2a3a4a'
+  ctx.beginPath()
+  ctx.moveTo(0, H * 0.45)
+  const peaksFar = [
+    [0, 0.42], [60, 0.35], [120, 0.40], [180, 0.30],
+    [240, 0.38], [300, 0.32], [360, 0.36], [420, 0.28],
+    [480, 0.35], [540, 0.40]
+  ]
+  peaksFar.forEach(([px, py]) => ctx.lineTo(px, H * py))
+  ctx.lineTo(W, H * 0.45)
+  ctx.closePath()
+  ctx.fill()
+
+  // Mid mountains
+  ctx.fillStyle = '#1a2a3a'
+  ctx.globalAlpha = 0.2
+  ctx.beginPath()
+  ctx.moveTo(0, H * 0.50)
+  const peaksMid = [
+    [0, 0.48], [40, 0.42], [100, 0.46], [160, 0.40],
+    [220, 0.44], [280, 0.38], [340, 0.43], [400, 0.39],
+    [460, 0.44], [540, 0.47]
+  ]
+  peaksMid.forEach(([px, py]) => ctx.lineTo(px, H * py))
+  ctx.lineTo(W, H * 0.50)
+  ctx.closePath()
+  ctx.fill()
+
+  // Water / mist at bottom
+  const mistGrad = ctx.createLinearGradient(0, H * 0.55, 0, H)
+  mistGrad.addColorStop(0, 'rgba(20,40,60,0)')
+  mistGrad.addColorStop(0.3, 'rgba(20,40,60,0.1)')
+  mistGrad.addColorStop(0.7, 'rgba(30,50,70,0.15)')
+  mistGrad.addColorStop(1, 'rgba(40,60,80,0.2)')
+  ctx.fillStyle = mistGrad
+  ctx.fillRect(0, H * 0.55, W, H * 0.45)
+
+  // Mist ripples
+  ctx.globalAlpha = 0.08
+  ctx.strokeStyle = '#4a6a8a'
+  ctx.lineWidth = 1
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath()
+    const my = H * 0.58 + i * 20
+    ctx.ellipse(W / 2 + (i % 2 === 0 ? 40 : -40), my, 120 + i * 20, 4, 0, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+
+  ctx.restore()
+
+  // Subtle ink splatter dots
+  ctx.save()
+  ctx.globalAlpha = 0.03
+  const splatters = [
+    [80, 200, 15], [450, 180, 8], [200, 300, 12],
+    [380, 280, 6], [120, 350, 10], [420, 150, 20]
+  ]
+  splatters.forEach(([sx, sy, sr]) => {
+    const radGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr)
+    radGrad.addColorStop(0, '#888')
+    radGrad.addColorStop(1, 'rgba(136,136,136,0)')
+    ctx.fillStyle = radGrad
+    ctx.beginPath()
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2)
+    ctx.fill()
+  })
+  ctx.restore()
+}
+
+// ============ DRAWING ============
+function drawBlock(r, c, elem, extraX = 0, extraY = 0, scale = 1, opacity = 1) {
+  const x = OFFSET_X + c * (TILE_SIZE + GAP) + extraX
+  const y = OFFSET_Y + r * (TILE_SIZE + GAP) + extraY
+  const size = TILE_SIZE * scale
+  const cx = x + TILE_SIZE / 2
+  const cy = y + TILE_SIZE / 2
+  const margin = (TILE_SIZE - size) / 2
+  const drawX = x + margin
+  const drawY = y + margin
+
+  ctx.save()
+  ctx.globalAlpha = opacity
+
+  // Glow
+  ctx.shadowColor = ELEMENTS[elem].glow
+  ctx.shadowBlur = 8 * scale
+
+  // Gradient background
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, TILE_SIZE / 2)
+  grad.addColorStop(0, ELEMENTS[elem].color1)
+  grad.addColorStop(0.6, ELEMENTS[elem].color1)
+  grad.addColorStop(1, ELEMENTS[elem].color2)
+
+  ctx.fillStyle = grad
+  ctx.beginPath()
+  roundRect(ctx, drawX, drawY, size, size, 7 * scale)
+  ctx.fill()
+
+  ctx.shadowBlur = 0
+
+  // Inner highlight (brush stroke effect)
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+  ctx.lineWidth = 1.5 * scale
+  ctx.beginPath()
+  roundRect(ctx, drawX + 3 * scale, drawY + 3 * scale, size - 6 * scale, size - 6 * scale, 5 * scale)
+  ctx.stroke()
+
+  // Brush-style border
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+  ctx.lineWidth = 2 * scale
+  ctx.beginPath()
+  roundRect(ctx, drawX, drawY, size, size, 7 * scale)
+  ctx.stroke()
+
+  // Bottom-right heavier stroke (ink wash effect)
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)'
+  ctx.lineWidth = 3 * scale
+  ctx.beginPath()
+  ctx.moveTo(drawX + size, drawY + size * 0.3)
+  ctx.lineTo(drawX + size, drawY + size)
+  ctx.lineTo(drawX + size * 0.3, drawY + size)
+  ctx.stroke()
+
+  // Chinese character
+  ctx.fillStyle = 'rgba(255,255,255,0.9)'
+  ctx.font = `bold ${Math.round(28 * scale)}px 'STKaiti', 'KaiTi', 'SimSun', serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'
+  ctx.shadowBlur = 4 * scale
+  ctx.fillText(ELEMENTS[elem].name, cx, cy + 2 * scale)
+  ctx.shadowBlur = 0
+
+  ctx.restore()
+}
+
+function drawEmpty(r, c) {
+  const x = OFFSET_X + c * (TILE_SIZE + GAP)
+  const y = OFFSET_Y + r * (TILE_SIZE + GAP)
+
+  ctx.fillStyle = 'rgba(30,40,55,0.5)'
+  ctx.beginPath()
+  roundRect(ctx, x, y, TILE_SIZE, TILE_SIZE, 7)
+  ctx.fill()
+
+  // Subtle ink wash pattern in empty space
+  ctx.strokeStyle = 'rgba(60,80,100,0.15)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 15, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 8, 0, Math.PI * 2)
+  ctx.stroke()
+}
+
+function drawCursor() {
+  const r = cursorR
+  const c = cursorC
+  const x = OFFSET_X + c * (TILE_SIZE + GAP) - 3
+  const y = OFFSET_Y + r * (TILE_SIZE + GAP) - 3
+  const size = TILE_SIZE + 6
+
+  // Pulse animation
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300)
+
+  ctx.save()
+
+  // Outer glow
+  ctx.shadowColor = 'rgba(200,180,150,0.6)'
+  ctx.shadowBlur = 12 + pulse * 8
+
+  // Cursor border (ink brush style)
+  ctx.strokeStyle = `rgba(220,200,170,${0.5 + pulse * 0.3})`
+  ctx.lineWidth = 3
+  ctx.setLineDash([6, 4])
+  ctx.lineDashOffset = -performance.now() / 100
+  ctx.beginPath()
+  roundRect(ctx, x, y, size, size, 9)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // Corner ornaments (ink-style)
+  const cornerLen = 8
+  ctx.strokeStyle = `rgba(200,180,150,${0.4 + pulse * 0.2})`
+  ctx.lineWidth = 2
+  // Top-left
+  ctx.beginPath()
+  ctx.moveTo(x + 2, y + cornerLen)
+  ctx.lineTo(x + 2, y + 2)
+  ctx.lineTo(x + cornerLen, y + 2)
+  ctx.stroke()
+  // Top-right
+  ctx.beginPath()
+  ctx.moveTo(x + size - cornerLen, y + 2)
+  ctx.lineTo(x + size - 2, y + 2)
+  ctx.lineTo(x + size - 2, y + cornerLen)
+  ctx.stroke()
+  // Bottom-left
+  ctx.beginPath()
+  ctx.moveTo(x + 2, y + size - cornerLen)
+  ctx.lineTo(x + 2, y + size - 2)
+  ctx.lineTo(x + cornerLen, y + size - 2)
+  ctx.stroke()
+  // Bottom-right
+  ctx.beginPath()
+  ctx.moveTo(x + size - cornerLen, y + size - 2)
+  ctx.lineTo(x + size - 2, y + size - 2)
+  ctx.lineTo(x + size - 2, y + size - cornerLen)
+  ctx.stroke()
+
+  ctx.restore()
+}
+
+function drawUI() {
+  // Title
+  ctx.save()
+  ctx.fillStyle = 'rgba(220,200,170,0.8)'
+  ctx.font = "bold 28px 'STKaiti', 'KaiTi', 'SimSun', serif"
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'
+  ctx.shadowBlur = 4
+  ctx.fillText('五行推推乐', W / 2, 32)
+  ctx.shadowBlur = 0
+
+  // Decorative line under title
+  ctx.strokeStyle = 'rgba(200,180,150,0.3)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(W / 2 - 60, 52)
+  ctx.lineTo(W / 2 + 60, 52)
+  ctx.stroke()
+  ctx.restore()
+
+  // Score
+  ctx.save()
+  ctx.fillStyle = 'rgba(220,200,170,0.9)'
+  ctx.font = "18px 'STKaiti', 'KaiTi', serif"
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  ctx.fillText('分数', OFFSET_X, OFFSET_Y - 30)
+  ctx.font = 'bold 22px sans-serif'
+  ctx.fillStyle = '#FFD700'
+  ctx.fillText(String(score), OFFSET_X + 50, OFFSET_Y - 33)
+
+  // Timer
+  ctx.textAlign = 'right'
+  ctx.font = "18px 'STKaiti', 'KaiTi', serif"
+  ctx.fillStyle = 'rgba(220,200,170,0.9)'
+  ctx.fillText('时间', OFFSET_X + BOARD_SIZE, OFFSET_Y - 30)
+
+  const displayTime = Math.ceil(timeLeft)
+  ctx.font = 'bold 22px sans-serif'
+  ctx.fillStyle = displayTime <= 10 ? '#FF4500' : '#E0E0E0'
+  ctx.fillText(displayTime + 's', OFFSET_X + BOARD_SIZE - 30, OFFSET_Y - 33)
+
+  // Timer bar
+  const barW = BOARD_SIZE
+  const barH = 4
+  const barX = OFFSET_X
+  const barY = OFFSET_Y - 12
+  const timeRatio = Math.max(0, timeLeft / GAME_DURATION)
+
+  ctx.fillStyle = 'rgba(255,255,255,0.1)'
+  ctx.beginPath()
+  roundRect(ctx, barX, barY, barW, barH, 2)
+  ctx.fill()
+
+  ctx.fillStyle = timeRatio > 0.3 ? 'rgba(200,180,150,0.6)' :
+                  timeRatio > 0.15 ? 'rgba(255,180,50,0.7)' : 'rgba(255,50,50,0.8)'
+  ctx.beginPath()
+  roundRect(ctx, barX, barY, barW * timeRatio, barH, 2)
+  ctx.fill()
+
+  ctx.restore()
+
+  // Score popup
+  if (scorePopup) {
+    ctx.save()
+    ctx.globalAlpha = scorePopup.opacity
+    ctx.fillStyle = '#FFD700'
+    ctx.font = `bold ${Math.round(20 * scorePopup.scale)}px sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.shadowColor = 'rgba(0,0,0,0.8)'
+    ctx.shadowBlur = 6
+    ctx.fillText(scorePopup.text, scorePopup.x, scorePopup.y)
+    ctx.restore()
+
+    scorePopup.y += scorePopup.vy
+    scorePopup.opacity -= 0.02
+    scorePopup.scale = Math.min(scorePopup.scale + 0.02, 1.2)
+    if (scorePopup.opacity <= 0) scorePopup = null
+  }
+}
+
+function drawOverlay(text, subtext, color = '#FFD700') {
+  ctx.save()
+  ctx.fillStyle = 'rgba(0,0,0,0.65)'
+  ctx.fillRect(0, 0, W, H)
+
+  ctx.fillStyle = color
+  ctx.font = "bold 42px 'STKaiti', 'KaiTi', serif"
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'
+  ctx.shadowBlur = 8
+  ctx.fillText(text, W / 2, H / 2 - 30)
+  ctx.shadowBlur = 0
+
+  if (subtext) {
+    ctx.fillStyle = 'rgba(200,200,200,0.8)'
+    ctx.font = "18px 'STKaiti', 'KaiTi', serif"
+    ctx.fillText(subtext, W / 2, H / 2 + 30)
+  }
+
+  if (gameState === 'idle') {
+    ctx.fillStyle = 'rgba(200,200,200,0.6)'
+    ctx.font = '16px sans-serif'
+    const blink = 0.5 + 0.5 * Math.sin(performance.now() / 500)
+    ctx.globalAlpha = blink
+    ctx.fillText('按任意方向键 或 点击方块开始', W / 2, H / 2 + 75)
+  }
+
+  if (gameState === 'won') {
+    ctx.fillStyle = 'rgba(200,200,200,0.6)'
+    ctx.font = "16px 'STKaiti', 'KaiTi', serif"
+    ctx.fillText('按 R 键重新开始', W / 2, H / 2 + 65)
+  }
+
+  if (gameState === 'lost') {
+    ctx.fillStyle = 'rgba(200,200,200,0.6)'
+    ctx.font = "16px 'STKaiti', 'KaiTi', serif"
+    ctx.fillText('按 R 键重新开始', W / 2, H / 2 + 65)
+  }
+
+  ctx.restore()
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  if (r > w / 2) r = w / 2
+  if (r > h / 2) r = h / 2
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+  ctx.lineTo(x + r, y + h)
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+  ctx.closePath()
+}
+
+// ============ INPUT ============
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') {
+    if (gameState === 'won' || gameState === 'lost') {
+      initGame()
+      return
+    }
+  }
+
+  if (gameState === 'idle') {
+    gameState = 'playing'
+    timerAccum = 0
+    timeLeft = GAME_DURATION
+  }
+
+  if (gameState !== 'playing') return
+
+  // Cursor movement
+  let dR = 0, dC = 0
+  switch (e.key) {
+    case 'ArrowUp': dR = -1; break
+    case 'ArrowDown': dR = 1; break
+    case 'ArrowLeft': dC = -1; break
+    case 'ArrowRight': dC = 1; break
+    case ' ': // Space to push
+    case 'Enter':
+      if (!isAnimating) pushBlock(cursorR, cursorC)
+      return
+    default: return
+  }
+
+  e.preventDefault()
+
+  if (dR !== 0 || dC !== 0) {
+    const newR = Math.max(0, Math.min(GRID_SIZE - 1, cursorR + dR))
+    const newC = Math.max(0, Math.min(GRID_SIZE - 1, cursorC + dC))
+
+    if (newR === cursorR && newC === cursorC) return
+
+    // Try to push if moving into empty space direction
+    // The cursor moves regardless
+    cursorR = newR
+    cursorC = newC
+    cursorAnimProgress = 0
+  }
+})
+
+// Touch
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault()
+  const t = e.touches[0]
+  touchStartX = t.clientX
+  touchStartY = t.clientY
+  touchMoved = false
+}, { passive: false })
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault()
+  const t = e.touches[0]
+  const dx = t.clientX - touchStartX
+  const dy = t.clientY - touchStartY
+  const dist = Math.sqrt(dx * dx + dy * dy)
+
+  if (dist > 20) {
+    touchMoved = true
+
+    // Start game on first swipe
+    if (gameState === 'idle') {
+      gameState = 'playing'
+      timerAccum = 0
+      timeLeft = GAME_DURATION
+    }
+    if (gameState !== 'playing') return
+
+    if (isAnimating) return
+
+    // Determine primary direction
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const dc = dx > 0 ? 1 : -1
+      const newC = Math.max(0, Math.min(GRID_SIZE - 1, cursorC + dc))
+      if (newC !== cursorC) {
+        cursorC = newC
+        cursorAnimProgress = 0
+      }
+    } else {
+      const dr = dy > 0 ? 1 : -1
+      const newR = Math.max(0, Math.min(GRID_SIZE - 1, cursorR + dr))
+      if (newR !== cursorR) {
+        cursorR = newR
+        cursorAnimProgress = 0
+      }
+    }
+    touchStartX = t.clientX
+    touchStartY = t.clientY
+  }
+}, { passive: false })
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault()
+
+  // If barely moved, treat as tap
+  if (!touchMoved) {
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+    const tx = touchStartX
+    const ty = touchStartY
+
+    // Canvas coordinates
+    const mx = (tx - rect.left) * scaleX
+    const my = (ty - rect.top) * scaleY
+
+    // Check if tapping on grid
+    const col = Math.floor((mx - OFFSET_X) / (TILE_SIZE + GAP))
+    const row = Math.floor((my - OFFSET_Y) / (TILE_SIZE + GAP))
+
+    if (row >= 0 && row < GRID_SIZE && col >= 0 && col < GRID_SIZE) {
+      // Start game on first tap
+      if (gameState === 'idle') {
+        gameState = 'playing'
+        timerAccum = 0
+        timeLeft = GAME_DURATION
+      }
+      if (gameState !== 'playing') return
+
+      if (isAnimating) return
+
+      if (grid[row][col] >= 0) {
+        // Check if adjacent to empty - push directly
+        if (Math.abs(row - emptyR) + Math.abs(col - emptyC) === 1) {
+          pushBlock(row, col)
+        } else {
+          // Move cursor to this cell
+          cursorR = row
+          cursorC = col
+          cursorAnimProgress = 0
+        }
+      }
+    }
+  }
+}, { passive: false })
+
+// ============ GAME LOOP ============
+function update(timestamp) {
+  // Timer
+  if (gameState === 'playing') {
+    if (timerAccum === 0) {
+      timerAccum = timestamp
+    }
+    const elapsed = (timestamp - timerAccum) / 1000
+    timeLeft = Math.max(0, GAME_DURATION - elapsed)
+
+    if (timeLeft <= 0) {
+      if (score >= WIN_SCORE) {
+        gameState = 'won'
+        playWinSound()
+      } else {
+        gameState = 'lost'
+        playLoseSound()
+      }
+    }
+  }
+
+  // Update cursor animation
+  if (cursorAnimProgress < 1) {
+    cursorAnimProgress = Math.min(1, cursorAnimProgress + 0.15)
+  }
+
+  // Update particles
+  updateParticles()
+}
+
+function draw() {
+  // Background
+  drawInkBackground()
+
+  // Board background
+  ctx.save()
+  ctx.fillStyle = 'rgba(15,25,40,0.6)'
+  ctx.beginPath()
+  roundRect(ctx, OFFSET_X - 5, OFFSET_Y - 5, BOARD_SIZE + 10, BOARD_SIZE + 10, 8)
+  ctx.fill()
+
+  // Board border
+  ctx.strokeStyle = 'rgba(100,120,140,0.3)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  roundRect(ctx, OFFSET_X - 5, OFFSET_Y - 5, BOARD_SIZE + 10, BOARD_SIZE + 10, 8)
+  ctx.stroke()
+  ctx.restore()
+
+  // Grid lines (subtle ink wash)
+  ctx.save()
+  ctx.strokeStyle = 'rgba(60,80,100,0.15)'
+  ctx.lineWidth = 1
+  for (let i = 1; i < GRID_SIZE; i++) {
+    const x = OFFSET_X + i * (TILE_SIZE + GAP) - GAP / 2
+    ctx.beginPath()
+    ctx.moveTo(x, OFFSET_Y)
+    ctx.lineTo(x, OFFSET_Y + BOARD_SIZE)
+    ctx.stroke()
+
+    const y = OFFSET_Y + i * (TILE_SIZE + GAP) - GAP / 2
+    ctx.beginPath()
+    ctx.moveTo(OFFSET_X, y)
+    ctx.lineTo(OFFSET_X + BOARD_SIZE, y)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  // Draw grid
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      // Check if this cell is being removed
+      const remCell = removingCells.find(a => a.r === r && a.c === c)
+      // Check if this cell is the animation destination (block sliding into here)
+      const dstAnim = animatingCells.find(a => a.toR === r && a.toC === c)
+
+      if (remCell) {
+        // Draw with fade/shrink animation
+        remCell.scale = Math.max(0, remCell.scale - 0.04)
+        remCell.opacity = Math.max(0, remCell.opacity - 0.04)
+        drawBlock(r, c, grid[r][c], 0, 0, remCell.scale, remCell.opacity)
+      } else if (dstAnim) {
+        // Block sliding into destination from source
+        dstAnim.progress += 0.2
+        const p = Math.min(1, dstAnim.progress)
+        // Offset backward from destination toward source
+        const xOff = (dstAnim.fromC - dstAnim.toC) * (TILE_SIZE + GAP) * (1 - p)
+        const yOff = (dstAnim.fromR - dstAnim.toR) * (TILE_SIZE + GAP) * (1 - p)
+        drawBlock(r, c, dstAnim.elem, xOff, yOff)
+      } else if (grid[r][c] < 0) {
+        drawEmpty(r, c)
+      } else {
+        drawBlock(r, c, grid[r][c])
+      }
+    }
+  }
+
+  // Draw cursor (except over empty cell when game is idle)
+  if (gameState !== 'won' && gameState !== 'lost') {
+    if (!(grid[cursorR] && grid[cursorR][cursorC] < 0)) {
+      drawCursor()
+    }
+  }
+
+  // Particles
+  ctx.save()
+  for (const p of particles) {
+    ctx.globalAlpha = p.life
+    const elem = ELEMENTS[p.elem]
+    ctx.fillStyle = elem.color1
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+
+  // UI
+  drawUI()
+
+  // Overlays
+  if (gameState === 'idle') {
+    drawOverlay('五行推推乐', '推方块 · 三消连击 · 限时挑战', '#CD853F')
+  } else if (gameState === 'won') {
+    drawOverlay('妙哉！', `得分 ${score} — 五行汇聚，大道已成`, '#FFD700')
+  } else if (gameState === 'lost') {
+    drawOverlay('道心破碎', `得分 ${score}/500 — 修炼未成，再接再厉`, '#888')
+  }
+
+  // Instructions hint
+  if (gameState === 'playing') {
+    ctx.save()
+    ctx.fillStyle = 'rgba(150,150,150,0.4)'
+    ctx.font = "12px 'STKaiti', 'KaiTi', serif"
+    ctx.textAlign = 'center'
+    ctx.fillText('方向键/滑动移动光标 · 空格/点击推动', W / 2, H - 20)
+    ctx.restore()
+  }
+}
+
+function gameLoop(timestamp) {
+  update(timestamp)
+  draw()
+  requestAnimationFrame(gameLoop)
+}
+
+// ============ START ============
+initGame()
+gameLoop(performance.now())
+
+// Resize handler
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H, 1)
+  canvas.style.width = (W * scale) + 'px'
+  canvas.style.height = (H * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+
+// Init audio on user interaction
+document.addEventListener('click', () => initAudio(), { once: true })
+document.addEventListener('touchstart', () => initAudio(), { once: true })
+document.addEventListener('keydown', () => initAudio(), { once: true })
+</script>
+</body>
+</html>

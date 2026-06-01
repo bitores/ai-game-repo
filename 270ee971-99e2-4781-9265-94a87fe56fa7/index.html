@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>幻境迷宫 · 重力回溯</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+canvas { display: block; }
+#ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; padding: 14px 18px; }
+#hud-top { display: flex; justify-content: space-between; align-items: flex-start; }
+.hud-item { color: #fff; font-size: 15px; text-shadow: 0 2px 12px rgba(0,0,0,0.9); background: rgba(0,0,0,0.4); padding: 4px 12px; border-radius: 20px; backdrop-filter: blur(4px); }
+#hp { color: #ff6b8a; }
+#hp .heart { display: inline-block; margin: 0 1px; }
+#hp .heart.dim { opacity: 0.3; }
+#score { color: #ffd93d; }
+#cores { color: #6bcbff; }
+#grav-indicator { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.25); font-size: 13px; letter-spacing: 2px; text-shadow: 0 0 20px rgba(100,200,255,0.3); pointer-events: none; background: rgba(0,0,0,0.3); padding: 4px 16px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.05); }
+#cd-bar { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); width: 160px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
+#cd-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #6bcbff, #a78bfa); border-radius: 4px; transition: width 0.05s linear; }
+#msg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+#msg-box { background: rgba(0,0,0,0.7); backdrop-filter: blur(12px); padding: 30px 48px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.08); text-align: center; display: none; box-shadow: 0 20px 60px rgba(0,0,0,0.8); }
+#msg-title { color: #fff; font-size: 36px; font-weight: 300; letter-spacing: 2px; }
+#msg-sub { color: rgba(255,255,255,0.5); font-size: 16px; margin-top: 10px; }
+#msg-hint { color: rgba(255,255,255,0.2); font-size: 13px; margin-top: 18px; letter-spacing: 1px; }
+.minimap-wrap { position: absolute; bottom: 100px; right: 16px; width: 90px; height: 90px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(255,255,255,0.06); background: rgba(0,0,0,0.5); pointer-events: none; backdrop-filter: blur(4px); }
+#minimap { width: 100%; height: 100%; }
+.control-hint { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.08); font-size: 11px; letter-spacing: 1px; white-space: nowrap; }
+@media (max-width: 600px) {
+  .hud-item { font-size: 12px; padding: 2px 10px; }
+  #msg-title { font-size: 26px; }
+  #msg-box { padding: 20px 28px; }
+  .minimap-wrap { width: 64px; height: 64px; bottom: 80px; right: 10px; }
+  #grav-indicator { bottom: 60px; font-size: 11px; }
+  #cd-bar { width: 120px; bottom: 28px; }
+}
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="hud-top">
+    <span class="hud-item" id="score">⟐ 0</span>
+    <span class="hud-item" id="hp">❤️❤️❤️</span>
+    <span class="hud-item" id="cores">◈ 0/5</span>
+  </div>
+  <div class="minimap-wrap"><canvas id="minimap" width="90" height="90"></canvas></div>
+  <div id="grav-indicator">⬇ 重力 · 正常</div>
+  <div id="cd-bar"><div id="cd-fill"></div></div>
+  <div class="control-hint">WASD 移动 · 空格 重力反转 · Shift 回溯</div>
+  <div id="msg-overlay">
+    <div id="msg-box">
+      <div id="msg-title"></div>
+      <div id="msg-sub"></div>
+      <div id="msg-hint"></div>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ─── CONFIG ───
+const CFG = {
+  GRID: 15,          // must be odd
+  CELL: 1.6,
+  WALL_H: 2.8,
+  PLAYER_R: 0.3,
+  SPEED: 5.5,
+  CORE_TOTAL: 5,
+  COLLAPSE_START: 18,
+  COLLAPSE_INTERVAL: 9,
+  COLLAPSE_PER_WAVE: 2,
+  RECORD_FRAMES: 240,
+  GRAV_CD: 0.6,
+  TIME_CD: 4.0,
+  TIME_SPEED: 0.6,
+};
+
+const HALF = (CFG.GRID - 1) / 2;
+
+// ─── MAZE GENERATION ───
+function generateMaze(size) {
+  // size must be odd
+  const g = Array(size).fill().map(() => Array(size).fill(1));
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  function dfs(r, c) {
+    g[r][c] = 0;
+    const dirs = shuffle([[0,2],[2,0],[0,-2],[-2,0]]);
+    for (const [dr, dc] of dirs) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < size && nc >= 0 && nc < size && g[nr][nc] === 1) {
+        g[r + dr / 2][c + dc / 2] = 0;
+        dfs(nr, nc);
+      }
+    }
+  }
+  dfs(1, 1);
+  return g;
+}
+
+const maze = generateMaze(CFG.GRID);
+
+// utility
+function isOpen(r, c) {
+  return r >= 0 && r < CFG.GRID && c >= 0 && c < CFG.GRID && maze[r][c] === 0;
+}
+
+function cellCenter(r, c) {
+  return (c - HALF) * CFG.CELL;
+}
+
+function cellR(r) {
+  return (r - HALF) * CFG.CELL;
+}
+
+// find open cells
+const openCells = [];
+for (let r = 0; r < CFG.GRID; r++) {
+  for (let c = 0; c < CFG.GRID; c++) {
+    if (maze[r][c] === 0) openCells.push({ r, c });
+  }
+}
+
+// ─── SCENE ───
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x06061a);
+scene.fog = new THREE.FogExp2(0x06061a, 0.012);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 80);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.prepend(renderer.domElement);
+
+// ─── LIGHTS ───
+const ambient = new THREE.AmbientLight(0x223366, 0.4);
+scene.add(ambient);
+
+const dirLight = new THREE.DirectionalLight(0xffeedd, 1.8);
+dirLight.position.set(12, 22, 8);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 1024;
+dirLight.shadow.mapSize.height = 1024;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 45;
+dirLight.shadow.camera.left = -22;
+dirLight.shadow.camera.right = 22;
+dirLight.shadow.camera.top = 22;
+dirLight.shadow.camera.bottom = -22;
+scene.add(dirLight);
+
+const fillLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+fillLight.position.set(-10, 8, -10);
+scene.add(fillLight);
+
+const glowLight = new THREE.PointLight(0x6bcbff, 0.5, 20);
+glowLight.position.set(0, 10, 0);
+scene.add(glowLight);
+
+// ─── MAZE VISUALS ───
+const wallGroup = new THREE.Group();
+scene.add(wallGroup);
+
+const wallMat = new THREE.MeshStandardMaterial({
+  color: 0x1a1a4a,
+  roughness: 0.6,
+  metalness: 0.3,
+  emissive: 0x111133,
+  emissiveIntensity: 0.1,
+});
+
+const wallMatGlow = new THREE.MeshStandardMaterial({
+  color: 0x2a2a6a,
+  roughness: 0.3,
+  metalness: 0.5,
+  emissive: 0x3344aa,
+  emissiveIntensity: 0.15,
+});
+
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x0a0a2a,
+  roughness: 0.9,
+  metalness: 0.0,
+  emissive: 0x0a0a2a,
+});
+
+// floor
+const floorGeo = new THREE.PlaneGeometry(CFG.GRID * CFG.CELL + 4, CFG.GRID * CFG.CELL + 4);
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.05;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// store wall data for collapse
+const wallMeshes = [];
+const wallData = []; // { mesh, r, c, alive }
+
+for (let r = 0; r < CFG.GRID; r++) {
+  for (let c = 0; c < CFG.GRID; c++) {
+    if (maze[r][c] === 1) {
+      const x = cellCenter(r, c);
+      const z = cellR(r);
+      const geo = new THREE.BoxGeometry(CFG.CELL * 1.02, CFG.WALL_H, CFG.CELL * 1.02);
+      const mat = (r + c) % 2 === 0 ? wallMat : wallMatGlow;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, CFG.WALL_H / 2, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      wallGroup.add(mesh);
+      wallMeshes.push(mesh);
+      wallData.push({ mesh, r, c, alive: true });
+    }
+  }
+}
+
+// ceiling glow grid
+const ceilGeo = new THREE.PlaneGeometry(CFG.GRID * CFG.CELL, CFG.GRID * CFG.CELL, CFG.GRID - 1, CFG.GRID - 1);
+const ceilMat = new THREE.MeshBasicMaterial({
+  color: 0x2233aa,
+  transparent: true,
+  opacity: 0.06,
+  wireframe: true,
+});
+const ceiling = new THREE.Mesh(ceilGeo, ceilMat);
+ceiling.rotation.x = Math.PI / 2;
+ceiling.position.y = CFG.WALL_H + 0.1;
+scene.add(ceiling);
+
+// edge glow
+const edgeMat = new THREE.LineBasicMaterial({ color: 0x4466ff, transparent: true, opacity: 0.08 });
+for (let i = 0; i <= CFG.GRID; i++) {
+  const p = (i - HALF) * CFG.CELL;
+  const g1 = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(p, 0.01, -HALF * CFG.CELL),
+    new THREE.Vector3(p, 0.01, HALF * CFG.CELL)
+  ]);
+  scene.add(new THREE.Line(g1, edgeMat));
+  const g2 = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-HALF * CFG.CELL, 0.01, p),
+    new THREE.Vector3(HALF * CFG.CELL, 0.01, p)
+  ]);
+  scene.add(new THREE.Line(g2, edgeMat));
+}
+
+// ─── STARS ───
+const starCount = 600;
+const starGeo = new THREE.BufferGeometry();
+const starPos = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+  starPos[i * 3] = (Math.random() - 0.5) * 120;
+  starPos[i * 3 + 1] = 4 + Math.random() * 30;
+  starPos[i * 3 + 2] = (Math.random() - 0.5) * 120;
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const starMat = new THREE.PointsMaterial({ color: 0x88bbff, size: 0.06, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending });
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+// ─── PLAYER ───
+const playerGroup = new THREE.Group();
+const pBodyGeo = new THREE.IcosahedronGeometry(CFG.PLAYER_R, 2);
+const pBodyMat = new THREE.MeshStandardMaterial({
+  color: 0x6bcbff,
+  roughness: 0.1,
+  metalness: 0.8,
+  emissive: 0x6bcbff,
+  emissiveIntensity: 0.3,
+});
+const pBody = new THREE.Mesh(pBodyGeo, pBodyMat);
+pBody.castShadow = true;
+playerGroup.add(pBody);
+
+// glow aura
+const auraGeo = new THREE.IcosahedronGeometry(CFG.PLAYER_R * 1.7, 1);
+const auraMat = new THREE.MeshBasicMaterial({
+  color: 0x6bcbff,
+  transparent: true,
+  opacity: 0.08,
+  blending: THREE.AdditiveBlending,
+});
+const aura = new THREE.Mesh(auraGeo, auraMat);
+playerGroup.add(aura);
+
+// trail
+const trailMat = new THREE.MeshBasicMaterial({
+  color: 0x6bcbff,
+  transparent: true,
+  opacity: 0.04,
+  blending: THREE.AdditiveBlending,
+});
+const trailMeshes = [];
+for (let i = 0; i < 12; i++) {
+  const t = new THREE.Mesh(new THREE.IcosahedronGeometry(CFG.PLAYER_R * 0.5, 0), trailMat);
+  t.visible = false;
+  scene.add(t);
+  trailMeshes.push(t);
+}
+
+// spawn point
+let spawnR = 1, spawnC = 1;
+// find a good spawn: corner
+for (const cell of openCells) {
+  if (cell.r === 1 && cell.c === 1) { spawnR = 1; spawnC = 1; break; }
+  if (cell.r === 1 && cell.c === 1) { spawnR = 1; spawnC = 1; }
+}
+// actually just use (1,1) which is always open in DFS from (1,1)
+const spawnX = cellCenter(spawnR, spawnC);
+const spawnZ = cellR(spawnC);
+// Wait: cellCenter uses r for x, cellR uses r for z. Let's be consistent:
+// cellCenter(r, c) => x = (c - HALF) * CELL
+// cellR(r) => z = (r - HALF) * CELL
+// So for cell (r,c): x = cellCenter(r,c), z = cellR(r)
+// spawn at (1,1)
+const spawnXf = cellCenter(1, 1);
+const spawnZf = cellR(1);
+
+playerGroup.position.set(spawnXf, 0.4, spawnZf);
+scene.add(playerGroup);
+
+// ─── ENERGY CORES ───
+const cores = [];
+const coreMat = new THREE.MeshStandardMaterial({
+  color: 0xffd93d,
+  roughness: 0.1,
+  metalness: 0.9,
+  emissive: 0xffd93d,
+  emissiveIntensity: 0.4,
+});
+const coreGlowMat = new THREE.MeshBasicMaterial({
+  color: 0xffd93d,
+  transparent: true,
+  opacity: 0.1,
+  blending: THREE.AdditiveBlending,
+});
+
+function spawnCore() {
+  // pick a random open cell not too close to spawn
+  let cell;
+  let attempts = 0;
+  do {
+    cell = openCells[Math.floor(Math.random() * openCells.length)];
+    attempts++;
+  } while (attempts < 50 && Math.abs(cell.r - 1) + Math.abs(cell.c - 1) < 4);
+
+  const x = cellCenter(cell.r, cell.c);
+  const z = cellR(cell.r);
+  const geo = new THREE.OctahedronGeometry(0.35);
+  const mesh = new THREE.Mesh(geo, coreMat);
+  mesh.position.set(x, 0.8 + Math.random() * 0.3, z);
+  mesh.castShadow = true;
+  scene.add(mesh);
+
+  // glow ring
+  const ringGeo = new THREE.TorusGeometry(0.5, 0.04, 8, 20);
+  const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xffd93d, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending });
+  const ring = new THREE.Mesh(ringGeo, ringMat2);
+  ring.rotation.x = Math.PI / 2;
+  mesh.add(ring);
+
+  const pulse = { phase: Math.random() * Math.PI * 2 };
+  cores.push({ mesh, collected: false, cell, pulse, ring });
+}
+
+for (let i = 0; i < CFG.CORE_TOTAL; i++) spawnCore();
+
+// ─── EXIT PORTAL ───
+let exitActive = false;
+const portalGroup = new THREE.Group();
+const portalMat = new THREE.MeshStandardMaterial({
+  color: 0xa78bfa,
+  roughness: 0.0,
+  metalness: 0.6,
+  emissive: 0xa78bfa,
+  emissiveIntensity: 0.5,
+  transparent: true,
+  opacity: 0.8,
+});
+const portalGeo = new THREE.TorusGeometry(0.9, 0.12, 12, 24);
+const portal = new THREE.Mesh(portalGeo, portalMat);
+portal.rotation.x = Math.PI / 2;
+portalGroup.add(portal);
+
+const portalInner = new THREE.Mesh(
+  new THREE.CircleGeometry(0.78, 24),
+  new THREE.MeshBasicMaterial({ color: 0xa78bfa, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending })
+);
+portalInner.rotation.x = -Math.PI / 2;
+portalInner.position.y = 0.02;
+portalGroup.add(portalInner);
+
+// place portal at center of maze
+const centerR = Math.floor(CFG.GRID / 2);
+const centerC = Math.floor(CFG.GRID / 2);
+// ensure it's open
+let portalR = centerR, portalC = centerC;
+if (maze[portalR][portalC] !== 0) {
+  // find nearest open
+  for (const cell of openCells) {
+    if (Math.abs(cell.r - centerR) + Math.abs(cell.c - centerC) < 3) {
+      portalR = cell.r;
+      portalC = cell.c;
+      break;
+    }
+  }
+}
+const portalX = cellCenter(portalR, portalC);
+const portalZ = cellR(portalR);
+portalGroup.position.set(portalX, 0.15, portalZ);
+portalGroup.scale.set(0, 0, 0);
+scene.add(portalGroup);
+
+// ─── ENEMIES (none, replaced by collapse) ───
+
+// ─── PARTICLES ───
+const pCount = 400;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(pCount * 3);
+const pCol = new Float32Array(pCount * 3);
+for (let i = 0; i < pCount; i++) {
+  pPos[i * 3] = (Math.random() - 0.5) * 50;
+  pPos[i * 3 + 1] = Math.random() * 12;
+  pPos[i * 3 + 2] = (Math.random() - 0.5) * 50;
+  const c = new THREE.Color().setHSL(0.65 + Math.random() * 0.2, 0.6, 0.3 + Math.random() * 0.3);
+  pCol[i * 3] = c.r;
+  pCol[i * 3 + 1] = c.g;
+  pCol[i * 3 + 2] = c.b;
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+const pMat = new THREE.PointsMaterial({ size: 0.07, vertexColors: true, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending });
+const particleSys = new THREE.Points(pGeo, pMat);
+scene.add(particleSys);
+
+// ─── INPUT ───
+const keys = {};
+let touchX = null, touchY = null;
+
+document.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ') e.preventDefault(); });
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+renderer.domElement.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  touchX = t.clientX;
+  touchY = t.clientY;
+});
+renderer.domElement.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  touchX = t.clientX;
+  touchY = t.clientY;
+});
+renderer.domElement.addEventListener('touchend', () => { touchX = null; touchY = null; });
+
+// ─── GAME STATE ───
+let score = 0;
+let hp = 3;
+const maxHp = 3;
+let coresCollected = 0;
+let gravReversed = false;
+let gravCooldown = 0;
+let timeCooldown = 0;
+let isTimeRewinding = false;
+let gameOver = false;
+let gameWon = false;
+let collapsedCount = 0;
+
+// position history for time rewind
+const posHistory = [];
+let rewindIdx = 0;
+
+// player Y
+const GROUND_Y = 0.4;
+const CEIL_Y = CFG.WALL_H - 0.4;
+
+let playerVelocityY = 0;
+let gravTransition = 0; // 0 = ground, 1 = ceiling
+
+// collapse timers
+let collapseTimer = CFG.COLLAPSE_START;
+
+// UI refs
+const scoreEl = document.getElementById('score');
+const hpEl = document.getElementById('hp');
+const coresEl = document.getElementById('cores');
+const gravInd = document.getElementById('grav-indicator');
+const cdFill = document.getElementById('cd-fill');
+const msgBox = document.getElementById('msg-box');
+const msgTitle = document.getElementById('msg-title');
+const msgSub = document.getElementById('msg-sub');
+const msgHint = document.getElementById('msg-hint');
+
+function updateUI() {
+  scoreEl.textContent = `⟐ ${score}`;
+  let hearts = '';
+  for (let i = 0; i < maxHp; i++) {
+    hearts += `<span class="heart ${i >= hp ? 'dim' : ''}">${i < hp ? '❤️' : '🖤'}</span>`;
+  }
+  hpEl.innerHTML = hearts;
+  coresEl.textContent = `◈ ${coresCollected}/${CFG.CORE_TOTAL}`;
+  gravInd.textContent = gravReversed ? '⬆ 重力 · 反转' : '⬇ 重力 · 正常';
+  gravInd.style.color = gravReversed ? 'rgba(167,139,250,0.6)' : 'rgba(107,203,255,0.6)';
+  // cd fill
+  const cd = Math.max(gravCooldown, timeCooldown);
+  const maxCd = Math.max(CFG.GRAV_CD, CFG.TIME_CD);
+  cdFill.style.width = `${(1 - cd / maxCd) * 100}%`;
+}
+
+function showMsg(title, sub, hint) {
+  msgBox.style.display = 'block';
+  msgTitle.textContent = title;
+  msgSub.textContent = sub || '';
+  msgHint.textContent = hint || '';
+}
+
+function hideMsg() {
+  msgBox.style.display = 'none';
+}
+
+function restart() {
+  playerGroup.position.set(spawnXf, GROUND_Y, spawnZf);
+  playerVelocityY = 0;
+  gravReversed = false;
+  gravTransition = 0;
+  gravCooldown = 0;
+  timeCooldown = 0;
+  isTimeRewinding = false;
+  posHistory.length = 0;
+  rewindIdx = 0;
+  hp = maxHp;
+  score = 0;
+  coresCollected = 0;
+  gameOver = false;
+  gameWon = false;
+  collapsedCount = 0;
+  collapseTimer = CFG.COLLAPSE_START;
+  exitActive = false;
+  portalGroup.scale.set(0, 0, 0);
+
+  // reset cores
+  for (const c of cores) {
+    c.collected = false;
+    c.mesh.visible = true;
+  }
+  // reset walls
+  for (const w of wallData) {
+    w.alive = true;
+    w.mesh.visible = true;
+    w.mesh.scale.set(1, 1, 1);
+    w.mesh.material.color.setHex(0x1a1a4a);
+    w.mesh.material.emissive.setHex(0x111133);
+    w.mesh.material.emissiveIntensity = 0.1;
+  }
+  hideMsg();
+  // regenerate maze
+  const newMaze = generateMaze(CFG.GRID);
+  for (let r = 0; r < CFG.GRID; r++) {
+    for (let c = 0; c < CFG.GRID; c++) {
+      maze[r][c] = newMaze[r][c];
+    }
+  }
+  // reposition walls
+  let wi = 0;
+  for (let r = 0; r < CFG.GRID; r++) {
+    for (let c = 0; c < CFG.GRID; c++) {
+      if (wallData[wi]) {
+        const shouldBe = maze[r][c] === 1;
+        wallData[wi].alive = shouldBe;
+        wallData[wi].mesh.visible = shouldBe;
+        if (!shouldBe) wallData[wi].mesh.scale.set(0, 0, 0);
+        wi++;
+      }
+    }
+  }
+  // reposition cores
+  for (const c of cores) {
+    let cell;
+    let attempts = 0;
+    do {
+      cell = openCells[Math.floor(Math.random() * openCells.length)];
+      attempts++;
+    } while (attempts < 40 && Math.abs(cell.r - 1) + Math.abs(cell.c - 1) < 4);
+    c.cell = cell;
+    c.mesh.position.set(cellCenter(cell.r, cell.c), 0.8 + Math.random() * 0.3, cellR(cell.r));
+    c.collected = false;
+    c.mesh.visible = true;
+  }
+  updateUI();
+}
+
+// ─── COLLAPSE ───
+function triggerCollapse() {
+  // find alive walls
+  const alive = wallData.filter(w => w.alive);
+  if (alive.length === 0) return;
+  const count = Math.min(CFG.COLLAPSE_PER_WAVE, alive.length);
+  const shuffled = alive.sort(() => Math.random() - 0.5);
+  for (let i = 0; i < count; i++) {
+    const w = shuffled[i];
+    if (!w.alive) continue;
+    w.alive = false;
+    // animate collapse
+    const mesh = w.mesh;
+    mesh.material = mesh.material.clone();
+    mesh.material.color.setHex(0xff4444);
+    mesh.material.emissive.setHex(0xff2222);
+    mesh.material.emissiveIntensity = 1.0;
+    // shrink and fade
+    const duration = 400 + Math.random() * 300;
+    const startTime = performance.now();
+    function animCollapse() {
+      const t = (performance.now() - startTime) / duration;
+      if (t >= 1) {
+        mesh.visible = false;
+        mesh.scale.set(0, 0, 0);
+        // debris particles
+        spawnDebris(mesh.position);
+        return;
+      }
+      const s = 1 - t * 0.8;
+      mesh.scale.set(s, s * (1 - t * 0.5), s);
+      mesh.material.opacity = 1 - t;
+      mesh.material.transparent = true;
+      requestAnimationFrame(animCollapse);
+    }
+    animCollapse();
+    collapsedCount++;
+  }
+}
+
+function spawnDebris(pos) {
+  const count = 8 + Math.floor(Math.random() * 6);
+  for (let i = 0; i < count; i++) {
+    const geo = new THREE.BoxGeometry(0.04 + Math.random() * 0.08, 0.04 + Math.random() * 0.08, 0.04 + Math.random() * 0.08);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x4466aa,
+      emissive: 0x4466aa,
+      emissiveIntensity: 0.3,
+      transparent: true,
+      opacity: 0.8,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(pos);
+    m.position.x += (Math.random() - 0.5) * 0.3;
+    m.position.z += (Math.random() - 0.5) * 0.3;
+    m.position.y += Math.random() * 0.3;
+    scene.add(m);
+    const vx = (Math.random() - 0.5) * 2;
+    const vy = 1 + Math.random() * 2;
+    const vz = (Math.random() - 0.5) * 2;
+    const life = 1.0 + Math.random() * 0.8;
+    const start = performance.now();
+    function animDebris() {
+      const t = (performance.now() - start) / 1000;
+      if (t > life || !m.parent) { scene.remove(m); return; }
+      m.position.x += vx * 0.016;
+      m.position.y += (vy - 3 * t) * 0.016;
+      m.position.z += vz * 0.016;
+      m.rotation.x += t * 2;
+      m.rotation.y += t * 1.5;
+      m.material.opacity = 0.8 * (1 - t / life);
+      requestAnimationFrame(animDebris);
+    }
+    animDeb

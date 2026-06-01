@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>时光沙漏</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; }
+canvas { display: block; background: #0d0d2b; border-radius: 8px; box-shadow: 0 0 60px rgba(100, 50, 200, 0.3); }
+#controls { position: fixed; bottom: 20px; left: 0; right: 0; display: none; justify-content: space-between; padding: 0 20px; pointer-events: none; z-index: 10; }
+#controls button { width: 70px; height: 70px; border-radius: 50%; border: 2px solid rgba(200, 180, 255, 0.4); background: rgba(30, 20, 60, 0.7); color: #d0c0ff; font-size: 28px; display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent; user-select: none; backdrop-filter: blur(4px); }
+#controls .right-group { display: flex; gap: 16px; }
+#controls .left-group { display: flex; gap: 16px; }
+@media (pointer: coarse) { #controls { display: flex; } }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="controls">
+  <div class="left-group">
+    <button id="btnLeft">◀</button>
+    <button id="btnRight">▶</button>
+  </div>
+  <div class="right-group">
+    <button id="btnRewind">⏪</button>
+    <button id="btnJump">▲</button>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+const GAME_WIDTH = 800
+const GAME_HEIGHT = 500
+canvas.width = GAME_WIDTH
+canvas.height = GAME_HEIGHT
+
+const GRAVITY = 0.55
+const JUMP_FORCE = -11.5
+const MOVE_SPEED = 4.8
+
+// --- INPUT ---
+const keys = {}
+document.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault() })
+document.addEventListener('keyup', e => { keys[e.key] = false })
+
+// Touch buttons
+const btnLeft = document.getElementById('btnLeft')
+const btnRight = document.getElementById('btnRight')
+const btnJump = document.getElementById('btnJump')
+const btnRewind = document.getElementById('btnRewind')
+let touchLeft = false, touchRight = false, touchJump = false, touchRewind = false
+
+function setupTouchButton(el, key) {
+  el.addEventListener('touchstart', e => { e.preventDefault(); keys[key] = true; if (key === 'w' || key === ' ') { touchJump = true } else if (key === 'e') { touchRewind = true } else if (key === 'ArrowLeft') { touchLeft = true } else if (key === 'ArrowRight') { touchRight = true } })
+  el.addEventListener('touchend', e => { e.preventDefault(); keys[key] = false; if (key === 'w' || key === ' ') { touchJump = false } else if (key === 'e') { touchRewind = false } else if (key === 'ArrowLeft') { touchLeft = false } else if (key === 'ArrowRight') { touchRight = false } })
+  el.addEventListener('touchcancel', e => { keys[key] = false; if (key === 'w' || key === ' ') { touchJump = false } else if (key === 'e') { touchRewind = false } else if (key === 'ArrowLeft') { touchLeft = false } else if (key === 'ArrowRight') { touchRight = false } })
+}
+setupTouchButton(btnLeft, 'ArrowLeft')
+setupTouchButton(btnRight, 'ArrowRight')
+setupTouchButton(btnJump, ' ')
+setupTouchButton(btnRewind, 'e')
+
+// --- PLAYER (时光沙漏) ---
+const player = {
+  x: 50, y: 400, w: 28, h: 38,
+  vx: 0, vy: 0,
+  onGround: false,
+  hp: 3, maxHp: 3,
+  invincible: 0,
+  sandAngle: 0
+}
+
+// --- TIME REWIND ---
+const positionHistory = []
+const MAX_HISTORY = 210
+let isRewinding = false
+let rewindIndex = 0
+let rewindEnergy = 100
+const REWIND_COST = 0.6
+const ENERGY_REGEN = 0.15
+let rewindEffect = 0
+
+// --- LEVEL DATA ---
+const islands = [
+  { x: 0, y: 460, w: 170, h: 22, color: '#3a2a1a', grass: '#5a9a4a' },
+  { x: 200, y: 370, w: 130, h: 20, color: '#3a2a1a', grass: '#5a9a4a' },
+  { x: 380, y: 290, w: 120, h: 20, color: '#3a2a1a', grass: '#5a9a4a' },
+  { x: 550, y: 370, w: 130, h: 20, color: '#3a2a1a', grass: '#5a9a4a' },
+  { x: 680, y: 440, w: 120, h: 22, color: '#3a2a1a', grass: '#5a9a4a' },
+  { x: 540, y: 210, w: 110, h: 20, color: '#3a2a1a', grass: '#8a5a3a' },
+  { x: 310, y: 480, w: 160, h: 18, color: '#3a2a1a', grass: '#5a9a4a' },
+]
+
+const spikes = [
+  { x: 415, y: 282, w: 18, h: 14, active: true },
+  { x: 575, y: 202, w: 18, h: 14, active: true },
+  { x: 240, y: 362, w: 18, h: 14, active: true },
+]
+
+const saw = { x: 460, y: 280, w: 24, h: 24, vx: 2.2, minX: 430, maxX: 560, active: true, angle: 0 }
+
+const fragments = [
+  { x: 250, y: 340, w: 18, h: 18, collected: false, glow: 0 },
+  { x: 420, y: 258, w: 18, h: 18, collected: false, glow: 0 },
+  { x: 600, y: 338, w: 18, h: 18, collected: false, glow: 0 },
+  { x: 370, y: 448, w: 18, h: 18, collected: false, glow: 0 },
+  { x: 690, y: 408, w: 18, h: 18, collected: false, glow: 0 },
+]
+
+const goal = { x: 730, y: 406, w: 32, h: 36 }
+
+let score = 0
+let gameOver = false
+let gameWon = false
+let deathTimer = 0
+let winTimer = 0
+let particles = []
+let starField = []
+for (let i = 0; i < 80; i++) {
+  starField.push({ x: Math.random() * GAME_WIDTH, y: Math.random() * GAME_HEIGHT, r: Math.random() * 1.8 + 0.5, a: Math.random() * 0.6 + 0.2, s: Math.random() * 0.02 + 0.01 })
+}
+
+// --- PARTICLES ---
+function spawnParticles(x, y, color, count, spread, life) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y, vx: (Math.random() - 0.5) * spread, vy: (Math.random() - 0.5) * spread - 1,
+      life: life || 40, maxLife: life || 40, r: Math.random() * 4 + 2, color: color,
+      decay: Math.random() * 0.03 + 0.01
+    })
+  }
+}
+
+function spawnRewindParticles(x, y) {
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.random() * Math.PI * 2
+    const speed = Math.random() * 3 + 1
+    particles.push({
+      x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 1,
+      life: 30, maxLife: 30, r: Math.random() * 3 + 2, color: '#ffd700',
+      decay: 0.05
+    })
+  }
+}
+
+// --- UPDATE ---
+function update() {
+  if (gameOver) { deathTimer++; return }
+  if (gameWon) { winTimer++; return }
+
+  // Rewind logic
+  if (!isRewinding) {
+    if ((keys['e'] || keys['E'] || touchRewind) && rewindEnergy > 10 && positionHistory.length > 15) {
+      isRewinding = true
+      rewindIndex = positionHistory.length - 1
+      rewindEffect = 20
+      spawnRewindParticles(player.x + player.w/2, player.y + player.h/2)
+    }
+  } else {
+    rewindEnergy -= REWIND_COST
+    if (rewindEnergy <= 0 || rewindIndex <= 0 || !(keys['e'] || keys['E'] || touchRewind)) {
+      isRewinding = false
+    } else {
+      const pos = positionHistory[rewindIndex]
+      player.x = pos.x
+      player.y = pos.y
+      player.vy = pos.vy
+      player.onGround = pos.g
+      rewindIndex--
+      positionHistory.pop()
+      if (Math.random() < 0.3) spawnRewindParticles(player.x + player.w/2, player.y + player.h/2)
+      rewindEffect = Math.max(0, rewindEffect - 0.5)
+    }
+    if (rewindEnergy <= 0) isRewinding = false
+  }
+
+  if (!isRewinding) {
+    rewindEnergy = Math.min(100, rewindEnergy + ENERGY_REGEN)
+  }
+
+  // Save position (only when not rewinding)
+  if (!isRewinding) {
+    positionHistory.push({ x: player.x, y: player.y, vy: player.vy, g: player.onGround })
+    if (positionHistory.length > MAX_HISTORY) positionHistory.shift()
+  }
+
+  // Movement
+  let moveLeft = keys['ArrowLeft'] || keys['a'] || keys['A'] || touchLeft
+  let moveRight = keys['ArrowRight'] || keys['d'] || keys['D'] || touchRight
+  player.vx = 0
+  if (moveLeft) player.vx = -MOVE_SPEED
+  if (moveRight) player.vx = MOVE_SPEED
+
+  // Jump
+  let jumpPressed = keys['ArrowUp'] || keys['w'] || keys['W'] || keys[' '] || touchJump
+  if (jumpPressed && player.onGround) {
+    player.vy = JUMP_FORCE
+    player.onGround = false
+  }
+
+  // Gravity
+  player.vy += GRAVITY
+  if (player.vy > 16) player.vy = 16
+
+  // Horizontal collision
+  player.x += player.vx
+  for (const p of islands) {
+    if (player.x < p.x + p.w && player.x + player.w > p.x &&
+        player.y < p.y + p.h && player.y + player.h > p.y) {
+      if (player.vx > 0) player.x = p.x - player.w
+      else if (player.vx < 0) player.x = p.x + p.w
+    }
+  }
+
+  // Vertical collision
+  player.y += player.vy
+  player.onGround = false
+  for (const p of islands) {
+    if (player.x < p.x + p.w && player.x + player.w > p.x &&
+        player.y < p.y + p.h && player.y + player.h > p.y) {
+      if (player.vy > 0) {
+        player.y = p.y - player.h
+        player.onGround = true
+      } else if (player.vy < 0) {
+        player.y = p.y + p.h
+      }
+      player.vy = 0
+    }
+  }
+
+  // Fall off
+  if (player.y > GAME_HEIGHT + 60) {
+    player.hp = 0
+  }
+
+  // Invincibility
+  if (player.invincible > 0) player.invincible--
+  player.sandAngle += 0.03
+
+  // Saw movement
+  saw.x += saw.vx
+  if (saw.x <= saw.minX || saw.x >= saw.maxX) saw.vx *= -1
+  saw.angle += 0.08
+
+  // Spikes collision
+  if (player.invincible === 0 && !isRewinding) {
+    for (const s of spikes) {
+      if (!s.active) continue
+      if (player.x < s.x + s.w && player.x + player.w > s.x &&
+          player.y < s.y + s.h && player.y + player.h > s.y) {
+        player.hp--
+        player.invincible = 55
+        player.vy = JUMP_FORCE * 0.6
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4444', 12, 5, 35)
+        if (player.hp <= 0) { gameOver = true; deathTimer = 0 }
+      }
+    }
+    // Saw collision
+    if (saw.active) {
+      if (player.x < saw.x + saw.w && player.x + player.w > saw.x &&
+          player.y < saw.y + saw.h && player.y + player.h > saw.y) {
+        player.hp--
+        player.invincible = 55
+        player.vy = JUMP_FORCE * 0.6
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff8800', 12, 5, 35)
+        if (player.hp <= 0) { gameOver = true; deathTimer = 0 }
+      }
+    }
+  }
+
+  // Fragments
+  for (const f of fragments) {
+    f.glow += 0.05
+    if (!f.collected && player.x < f.x + f.w && player.x + player.w > f.x &&
+        player.y < f.y + f.h && player.y + player.h > f.y) {
+      f.collected = true
+      score += 150
+      spawnParticles(f.x + f.w/2, f.y + f.h/2, '#d080ff', 20, 6, 40)
+    }
+  }
+
+  // Goal
+  if (player.x < goal.x + goal.w && player.x + player.w > goal.x &&
+      player.y < goal.y + goal.h && player.y + player.h > goal.y) {
+    if (!gameWon) {
+      gameWon = true
+      winTimer = 0
+      spawnParticles(goal.x + goal.w/2, goal.y + goal.h/2, '#ffd700', 40, 8, 60)
+    }
+  }
+
+  // Check death
+  if (player.hp <= 0 && !gameOver) {
+    gameOver = true
+    deathTimer = 0
+    spawnParticles(player.x + player.w/2, player.y + player.h/2, '#ff4466', 25, 7, 45)
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]
+    p.x += p.vx
+    p.y += p.vy
+    p.vy += 0.04
+    p.life -= 1
+    if (p.life <= 0) particles.splice(i, 1)
+  }
+
+  // Stars
+  for (const s of starField) {
+    s.a += s.s
+  }
+}
+
+// --- DRAW ---
+function draw() {
+  ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+
+  // Background gradient
+  const grad = ctx.createRadialGradient(400, 250, 100, 400, 250, 500)
+  grad.addColorStop(0, '#1a1040')
+  grad.addColorStop(0.5, '#0d0d2b')
+  grad.addColorStop(1, '#050510')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+
+  // Stars
+  for (const s of starField) {
+    const alpha = 0.3 + Math.sin(s.a) * 0.3
+    ctx.globalAlpha = alpha
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+
+  // Background clouds / nebula
+  ctx.globalAlpha = 0.08
+  for (let i = 0; i < 5; i++) {
+    const cx = 150 + i * 160 + Math.sin(Date.now() * 0.0001 + i) * 20
+    const cy = 100 + i * 70
+    const grd = ctx.createRadialGradient(cx, cy, 10, cx, cy, 120)
+    grd.addColorStop(0, '#8060ff')
+    grd.addColorStop(1, 'transparent')
+    ctx.fillStyle = grd
+    ctx.fillRect(cx - 120, cy - 120, 240, 240)
+  }
+  ctx.globalAlpha = 1
+
+  // --- Draw islands ---
+  for (const p of islands) {
+    // Island shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'
+    ctx.beginPath()
+    ctx.ellipse(p.x + p.w/2 + 4, p.y + p.h + 6, p.w/2 + 8, 8, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Island body
+    const bodyGrad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h)
+    bodyGrad.addColorStop(0, p.grass)
+    bodyGrad.addColorStop(0.3, p.color)
+    bodyGrad.addColorStop(1, '#2a1a0a')
+    ctx.fillStyle = bodyGrad
+    ctx.beginPath()
+    ctx.ellipse(p.x + p.w/2, p.y + p.h/2, p.w/2, p.h/2 + 4, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Grass top
+    ctx.fillStyle = p.grass
+    ctx.beginPath()
+    ctx.ellipse(p.x + p.w/2, p.y + 2, p.w/2 - 4, 6, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Grass highlight
+    ctx.fillStyle = 'rgba(120, 200, 100, 0.3)'
+    ctx.beginPath()
+    ctx.ellipse(p.x + p.w/2 - 4, p.y + 1, p.w/4, 3, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Small roots
+    ctx.strokeStyle = 'rgba(60, 40, 20, 0.4)'
+    ctx.lineWidth = 1.5
+    for (let i = 0; i < 3; i++) {
+      const rx = p.x + 10 + i * (p.w - 20) / 2
+      ctx.beginPath()
+      ctx.moveTo(rx, p.y + p.h - 4)
+      ctx.quadraticCurveTo(rx + (i - 1) * 6, p.y + p.h + 10, rx + (i - 1) * 10, p.y + p.h + 14)
+      ctx.stroke()
+    }
+
+    // Floating clouds under island
+    ctx.globalAlpha = 0.15
+    ctx.fillStyle = '#fff'
+    for (let i = 0; i < 3; i++) {
+      const cx = p.x + 15 + i * (p.w - 30) / 2 + Math.sin(Date.now() * 0.0005 + i * 2) * 3
+      const cy = p.y + p.h + 8 + i * 4
+      ctx.beginPath()
+      ctx.arc(cx, cy, 10 + i * 2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // --- Spikes ---
+  ctx.fillStyle = '#d03030'
+  ctx.shadowColor = '#ff4444'
+  ctx.shadowBlur = 10
+  for (const s of spikes) {
+    if (!s.active) continue
+    ctx.beginPath()
+    ctx.moveTo(s.x, s.y + s.h)
+    ctx.lineTo(s.x + s.w/2, s.y - 2)
+    ctx.lineTo(s.x + s.w, s.y + s.h)
+    ctx.closePath()
+    ctx.fill()
+    // Inner glow
+    ctx.fillStyle = 'rgba(255, 100, 100, 0.4)'
+    ctx.beginPath()
+    ctx.moveTo(s.x + 3, s.y + s.h - 2)
+    ctx.lineTo(s.x + s.w/2, s.y + 4)
+    ctx.lineTo(s.x + s.w - 3, s.y + s.h - 2)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = '#d03030'
+  }
+  ctx.shadowBlur = 0
+
+  // --- Saw ---
+  if (saw.active) {
+    ctx.save()
+    ctx.translate(saw.x + saw.w/2, saw.y + saw.h/2)
+    ctx.rotate(saw.angle)
+    ctx.shadowColor = '#ff6600'
+    ctx.shadowBlur = 15
+    // Saw teeth
+    ctx.fillStyle = '#cc5500'
+    ctx.beginPath()
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      const r = i % 2 === 0 ? 14 : 10
+      ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r)
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = '#ff8833'
+    ctx.beginPath()
+    ctx.arc(0, 0, 5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.shadowBlur = 0
+    ctx.restore()
+  }
+
+  // --- Fragments (记忆碎片) ---
+  for (const f of fragments) {
+    if (f.collected) continue
+    const pulse = Math.sin(f.glow) * 0.15 + 0.85
+    const cx = f.x + f.w/2
+    const cy = f.y + f.h/2
+
+    // Outer glow
+    ctx.shadowColor = '#b060ff'
+    ctx.shadowBlur = 25 * pulse
+
+    // Diamond shape
+    ctx.fillStyle = '#c070ff'
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - 10 * pulse)
+    ctx.lineTo(cx + 7 * pulse, cy)
+    ctx.lineTo(cx, cy + 10 * pulse)
+    ctx.lineTo(cx - 7 * pulse, cy)
+    ctx.closePath()
+    ctx.fill()
+
+    // Inner diamond
+    ctx.fillStyle = '#e0a0ff'
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - 5 * pulse)
+    ctx.lineTo(cx + 3 * pulse, cy)
+    ctx.lineTo(cx, cy + 5 * pulse)
+    ctx.lineTo(cx - 3 * pulse, cy)
+    ctx.closePath()
+    ctx.fill()
+
+    // Sparkle
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(cx - 2, cy - 3, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.shadowBlur = 0
+  }
+
+  // --- Goal (时空门) ---
+  const goalPulse = Math.sin(Date.now() * 0.003) * 0.1 + 0.9
+  ctx.shadowColor = '#44ddff'
+  ctx.shadowBlur = 20 * goalPulse
+  ctx.fillStyle = '#22aadd'
+  ctx.beginPath()
+  ctx.ellipse(goal.x + goal.w/2, goal.y + goal.h/2, goal.w/2 * goalPulse, goal.h/2 * goalPulse, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = 'rgba(100, 220, 255, 0.4)'
+  ctx.beginPath()
+  ctx.ellipse(goal.x + goal.w/2, goal.y + goal.h/2, goal.w/3 * goalPulse, goal.h/3 * goalPulse, 0, 0, Math.PI * 2)
+  ctx.fill()
+  // Rune symbol
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(goal.x + goal.w/2, goal.y + goal.h/2, 6 * goalPulse, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(goal.x + goal.w/2, goal.y + goal.h/2 - 8 * goalPulse)
+  ctx.lineTo(goal.x + goal.w/2, goal.y + goal.h/2 + 8 * goalPulse)
+  ctx.moveTo(goal.x + goal.w/2 - 8 * goalPulse, goal.y + goal.h/2)
+  ctx.lineTo(goal.x + goal.w/2 + 8 * goalPulse, goal.y + goal.h/2)
+  ctx.stroke()
+  ctx.shadowBlur = 0
+
+  // --- Player (时光沙漏) ---
+  if (player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0) {
+    ctx.globalAlpha = 0.5
+  }
+  const px = player.x, py = player.y, pw = player.w, ph = player.h
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'
+  ctx.beginPath()
+  ctx.ellipse(px + pw/2, py + ph + 2, pw/2 + 2, 4, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Sand hourglass body
+  const hgx = px + pw/2
+  const hgy = py + 2
+  const hgw = pw * 0.8
+  const hgh = ph - 4
+
+  // Glass body (top)
+  ctx.fillStyle = 'rgba(180, 220, 255, 0.25)'
+  ctx.strokeStyle = 'rgba(200, 230, 255, 0.6)'
+  ctx.lineWidth = 1.5
+  // Top triangle
+  ctx.beginPath()
+  ctx.moveTo(hgx - hgw/2, hgy)
+  ctx.lineTo(hgx + hgw/2, hgy)
+  ctx.lineTo(hgx, hgy + hgh * 0.45)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  // Bottom triangle
+  ctx.beginPath()
+  ctx.moveTo(hgx - hgw/2, hgy + hgh)
+  ctx.lineTo(hgx + hgw/2, hgy + hgh)
+  ctx.lineTo(hgx, hgy + hgh * 0.55)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+
+  // Sand in top (flowing)
+  const sandLevel = Math.sin(player.sandAngle) * 0.15 + 0.35
+  ctx.fillStyle = 'rgba(255, 215, 100, 0.8)'
+  ctx.beginPath()
+  ctx.moveTo(hgx - hgw/2 * sandLevel, hgy + 2)
+  ctx.lineTo(hgx + hgw/2 * sandLevel, hgy + 2)
+  ctx.lineTo(hgx, hgy + hgh * 0.42)
+  ctx.closePath()
+  ctx.fill()
+
+  // Sand stream (middle)
+  ctx.strokeStyle = 'rgba(255, 220, 120, 0.6)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(hgx, hgy + hgh * 0.45)
+  ctx.lineTo(hgx, hgy + hgh * 0.55)
+  ctx.stroke()
+
+  // Sand in bottom (accumulated)
+  const bottomSand = Math.sin(player.sandAngle + 1) * 0.1 + 0.3
+  ctx.fillStyle = 'rgba(255, 215, 100, 0.7)'
+  ctx.beginPath()
+  ctx.moveTo(hgx - hgw/2 * bottomSand, hgy + hgh - 2)
+  ctx.lineTo(hgx + hgw/2 * bottomSand, hgy + hgh - 2)
+  ctx.lineTo(hgx, hgy + hgh * 0.58)
+  ctx.closePath()
+  ctx.fill()
+
+  // Glass shine
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'
+  ctx.beginPath()
+  ctx.moveTo(hgx - hgw/3, hgy + 6)
+  ctx.lineTo(hgx - hgw/6, hgy + 6)
+  ctx.lineTo(hgx - hgw/4, hgy + hgh * 0.3)
+  ctx.closePath()
+  ctx.fill()
+
+  // Hourglass frame (top and bottom bars)
+  ctx.fillStyle = 'rgba(200, 180, 140, 0.7)'
+  ctx.fillRect(hgx - hgw/2 - 2, hgy - 1, hgw + 4, 3)
+  ctx.fillRect(hgx - hgw/2 - 2, hgy + hgh - 2, hgw + 4, 3)
+
+  // Wing / decorative curves on sides
+  ctx.strokeStyle = 'rgba(200, 180, 140, 0.4)'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.arc(hgx - hgw/2 - 3, hgy + hgh * 0.3, 4, -Math.PI/2, Math.PI/2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(hgx + hgw/2 + 3, hgy + hgh * 0.3, 4, -Math.PI/2, Math.PI/2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(hgx - hgw/2 - 3, hgy + hgh * 0.7, 4, Math.PI/2, -Math.PI/2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(hgx + hgw/2 + 3, hgy + hgh * 0.7, 4, Math.PI/2, -Math.PI/2)
+  ctx.stroke()
+
+  // Glow around hourglass (time power)
+  if (rewindEnergy > 30) {
+    ctx.shadowColor = '#ffd700'
+    ctx.shadowBlur = 20 * (rewindEnergy / 100)
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.05)'
+    ctx.beginPath()
+    ctx.arc(hgx, hgy + hgh/2, 18, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.shadowBlur = 0
+  }
+
+  ctx.globalAlpha = 1
+
+  // --- Particles ---
+  for (const p of particles) {
+    const alpha = p.life / p.maxLife
+    ctx.globalAlpha = alpha
+    ctx.fillStyle = p.color
+    ctx.shadowColor = p.color
+    ctx.shadowBlur = 8
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+  ctx.shadowBlur = 0
+
+  // --- Rewind visual effect ---
+  if (isRewinding || rewindEffect > 0) {
+    const intensity = isRewinding ? 0.2 : rewindEffect * 0.01
+    ctx.fillStyle = `rgba(255, 215, 0, ${intensity})`
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+
+    // Vignette
+    const vg = ctx.createRadialGradient(400, 250, 100, 400, 250, 400)
+    vg.addColorStop(0, 'transparent')
+    vg.addColorStop(0.7, 'transparent')
+    vg.addColorStop(1, `rgba(255, 200, 50, ${intensity * 0.5})`)
+    ctx.fillStyle = vg
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+
+    // Clock lines
+    ctx.strokeStyle = `rgba(255, 215, 0, ${intensity * 0.3})`
+    ctx.lineWidth = 1
+    const cx = 400, cy = 250
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + Date.now() * 0.001
+      const r1 = 80, r2 = 100
+      ctx.beginPath()
+      ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1)
+      ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2)
+      ctx.stroke()
+    }
+  }
+
+  // --- UI ---
+  // Hearts
+  ctx.font = '18px sans-serif'
+  for (let i = 0; i < player.maxHp; i++) {
+    ctx.fillStyle = i < player.hp ? '#ff4466' : '#333'
+    ctx.shadowColor = i < player.hp ? '#ff4466' : 'transparent'
+    ctx.shadowBlur = i < player.hp ? 8 : 0
+    ctx.fillText('♥', 14 + i * 24, 28)
+  }
+  ctx.shadowBlur = 0
+
+  // Score
+  ctx.fillStyle = '#d0c0ff'
+  ctx.font = '16px sans-serif'
+  ctx.fillText('✦ ' + score, 14, 56)
+
+  // Fragment counter
+  const collected = fragments.filter(f => f.collected).length
+  ctx.fillStyle = '#b080d0'
+  ctx.font = '14px sans-serif'
+  ctx.fillText('碎片 ' + collected + '/' + fragments.length, 14, 78)
+
+  // Energy bar
+  const barX = 14, barY = 90, barW = 120, barH = 10
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'
+  ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2)
+  const eGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0)
+  eGrad.addColorStop(0, '#ffd700')
+  eGrad.addColorStop(1, '#ff8800')
+  ctx.fillStyle = eGrad
+  ctx.fillRect(barX, barY, barW * (rewindEnergy / 100), barH)
+  ctx.strokeStyle = 'rgba(255,215,0,0.3)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(barX - 1, barY - 1, barW + 2, barH + 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.5)'
+  ctx.font = '8px sans-serif'
+  ctx.fillText('⏪ 时间能量', barX + 2, barY + 8)
+
+  // Key hints
+  ctx.fillStyle = 'rgba(200,200,255,0.2)'
+  ctx.font = '11px sans-serif'
+  ctx.fillText('WASD/方向键 移动跳跃  |  E 倒流时间  |  R 重启', GAME_WIDTH / 2 - 170, GAME_HEIGHT - 12)
+
+  // --- Game Over / Win ---
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+    ctx.fillStyle = '#ff4466'
+    ctx.font = 'bold 44px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.shadowColor = '#ff4466'
+    ctx.shadowBlur = 30
+    ctx.fillText('时光破碎', GAME_WIDTH/2, GAME_HEIGHT/2 - 20)
+    ctx.shadowBlur = 0
+    ctx.fillStyle = '#ccaacc'
+    ctx.font = '18px sans-serif'
+    ctx.fillText('按 R 键重新开始', GAME_WIDTH/2, GAME_HEIGHT/2 + 40)
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'
+    ctx.font = '14px sans-serif'
+    ctx.fillText('收集碎片: ' + fragments.filter(f=>f.collected).length + '/' + fragments.length + '  分数: ' + score, GAME_WIDTH/2, GAME_HEIGHT/2 + 75)
+    ctx.textAlign = 'left'
+  }
+  if (gameWon) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+    ctx.fillStyle = '#ffd700'
+    ctx.font = 'bold 44px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.shadowColor = '#ffd700'
+    ctx.shadowBlur = 40
+    ctx.fillText('时空归位', GAME_WIDTH/2, GAME_HEIGHT/2 - 20)
+    ctx.shadowBlur = 0
+    ctx.fillStyle = '#d0c0ff'
+    ctx.font = '20px sans-serif'
+    ctx.fillText('碎片 ' + fragments.filter(f=>f.collected).length + '/' + fragments.length + '  分数: ' + score, GAME_WIDTH/2, GAME_HEIGHT/2 + 30)
+    ctx.fillStyle = '#a0a0cc'
+    ctx.font = '16px sans-serif'
+    ctx.fillText('按 R 键重新开始', GAME_WIDTH/2, GAME_HEIGHT/2 + 70)
+    ctx.textAlign = 'left'
+  }
+}
+
+// --- RESTART ---
+function restart() {
+  player.x = 50; player.y = 400
+  player.vx = 0; player.vy = 0
+  player.hp = player.maxHp
+  player.invincible = 0
+  player.onGround = false
+  player.sandAngle = 0
+  for (const f of fragments) f.collected = false
+  for (const s of spikes) s.active = true
+  saw.active = true; saw.x = 460
+  positionHistory.length = 0
+  isRewinding = false
+  rewindEnergy = 100
+  rewindEffect = 0
+  particles.length = 0
+  score = 0
+  gameOver = false
+  gameWon = false
+  deathTimer = 0
+  winTimer = 0
+}
+document.addEventListener('keydown', e => {
+  if ((e.key === 'r' || e.key === 'R') && (gameOver || gameWon)) restart()
+})
+
+// --- GAME LOOP ---
+function gameLoop() {
+  update()
+  draw()
+  requestAnimationFrame(gameLoop)
+}
+gameLoop()
+
+// Resize
+function resize() {
+  const maxW = window.innerWidth - 20
+  const maxH = window.innerHeight - 20
+  const scale = Math.min(maxW / GAME_WIDTH, maxH / GAME_HEIGHT)
+  canvas.style.width = (GAME_WIDTH * scale) + 'px'
+  canvas.style.height = (GAME_HEIGHT * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+
+// Touch restart detection (double tap on game over)
+canvas.addEventListener('dblclick', () => {
+  if (gameOver || gameWon) restart()
+})
+</script>
+</body>
+</html>

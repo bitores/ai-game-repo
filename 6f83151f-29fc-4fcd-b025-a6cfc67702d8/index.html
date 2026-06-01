@@ -1,0 +1,1710 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>光粒暗影 - Light Particle Shadow</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #05050a;
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+}
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+}
+#ui-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+#teleport-btn {
+    position: absolute;
+    bottom: 30px;
+    right: 30px;
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, rgba(100, 180, 255, 0.4), rgba(20, 60, 120, 0.6));
+    border: 2px solid rgba(100, 180, 255, 0.5);
+    color: #aaddff;
+    font-size: 11px;
+    font-weight: bold;
+    pointer-events: auto;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-shadow: 0 0 10px rgba(100, 180, 255, 0.8);
+    box-shadow: 0 0 20px rgba(100, 180, 255, 0.2), inset 0 0 20px rgba(100, 180, 255, 0.1);
+    transition: all 0.2s;
+    touch-action: manipulation;
+    z-index: 20;
+}
+#teleport-btn:active {
+    transform: scale(0.9);
+    background: radial-gradient(circle at 35% 35%, rgba(100, 180, 255, 0.6), rgba(20, 60, 120, 0.8));
+}
+#teleport-btn .key-hint {
+    font-size: 18px;
+    margin-top: 2px;
+}
+#teleport-btn .cooldown-overlay {
+    position: absolute;
+    top: 2px; left: 2px;
+    width: calc(100% - 4px); height: calc(100% - 4px);
+    border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: rgba(255,255,255,0.5);
+}
+@media (pointer: coarse) {
+    #teleport-btn { display: flex; }
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="ui-overlay">
+    <button id="teleport-btn">
+        <span>瞬移</span>
+        <span class="key-hint">E</span>
+        <div class="cooldown-overlay" id="tp-cooldown"></div>
+    </button>
+</div>
+<script>
+(function() {
+'use strict';
+
+// ============================================================
+// CANVAS SETUP
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ============================================================
+// UTILITY
+// ============================================================
+function dist(x1, y1, x2, y2) {
+    return Math.sqrt((x1-x2)*(x1-x2) + (y1-y2)*(y1-y2));
+}
+
+function lerp(a, b, t) {
+    return a + (b - a) * t;
+}
+
+function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+}
+
+function rand(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+function randInt(min, max) {
+    return Math.floor(rand(min, max + 1));
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+// ============================================================
+// GAME STATE
+// ============================================================
+const STATE = { MENU: 0, WAVE_INTRO: 1, PLAYING: 2, GAME_OVER: 3 };
+
+const game = {
+    state: STATE.MENU,
+    score: 0,
+    wave: 0,
+    waveIntroTimer: 0,
+    enemiesKilled: 0,
+    enemiesInWave: 0,
+    spawnTimer: 0,
+    spawnCount: 0,
+    screenShake: { x: 0, y: 0, intensity: 0 },
+    gameTime: 0,
+    flashMessage: '',
+    flashTimer: 0,
+    comboCount: 0,
+    comboTimer: 0,
+    totalKills: 0,
+    titleAlpha: 1,
+    subtitleAlpha: 0,
+};
+
+// ============================================================
+// PLAYER
+// ============================================================
+const player = {
+    x: 0, y: 0,
+    radius: 15,
+    speed: 4.5,
+    health: 5,
+    maxHealth: 5,
+    invincibleTimer: 0,
+    invincibleDuration: 45,
+    trail: [],
+    maxTrail: 25,
+    targetX: 0, targetY: 0,
+    alive: true,
+    teleportCooldown: 0,
+    teleportDuration: 90,
+    dashEffect: 0,
+    dashFromX: 0, dashFromY: 0,
+    dashProgress: 0,
+    isDashing: false,
+    glowPulse: 0,
+    moveX: 0, moveY: 0,
+};
+
+const teleportBtn = document.getElementById('teleport-btn');
+const tpCooldownOverlay = document.getElementById('tp-cooldown');
+
+// ============================================================
+// PROJECTILE
+// ============================================================
+const proj = {
+    x: 0, y: 0,
+    vx: 0, vy: 0,
+    speed: 11,
+    radius: 5,
+    active: false,
+    bounces: 0,
+    maxBounces: 10,
+    lifetime: 0,
+    maxLifetime: 150,
+    trail: [],
+    maxTrail: 60,
+    cooldown: 0,
+    cooldownDuration: 10,
+    hitEnemy: false,
+};
+
+// ============================================================
+// PARTICLES
+// ============================================================
+let particles = [];
+const MAX_PARTICLES = 300;
+
+function spawnParticles(x, y, count, color, speed, life, sizeRange) {
+    for (let i = 0; i < count && particles.length < MAX_PARTICLES; i++) {
+        const angle = rand(0, Math.PI * 2);
+        const spd = rand(speed * 0.3, speed);
+        particles.push({
+            x, y,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
+            life: rand(life * 0.5, life),
+            maxLife: life,
+            color: color,
+            radius: rand(sizeRange[0], sizeRange[1]),
+            gravity: rand(-0.02, 0.05),
+            friction: rand(0.96, 0.99),
+        });
+    }
+}
+
+function spawnKillBurst(x, y) {
+    // Golden/white burst
+    spawnParticles(x, y, 30, '#ffdd88', 5, 40, [2, 6]);
+    spawnParticles(x, y, 20, '#ffffff', 3, 30, [1, 4]);
+    spawnParticles(x, y, 15, '#88ddff', 4, 35, [2, 5]);
+    // Screen shake
+    game.screenShake.intensity = Math.max(game.screenShake.intensity, 6);
+}
+
+function spawnTeleportBurst(fromX, fromY, toX, toY) {
+    spawnParticles(fromX, fromY, 20, '#88ddff', 6, 30, [2, 5]);
+    spawnParticles(fromX, fromY, 10, '#ffffff', 4, 25, [1, 3]);
+    spawnParticles(toX, toY, 25, '#aaddff', 7, 35, [2, 6]);
+    spawnParticles(toX, toY, 15, '#ffffff', 5, 30, [1, 4]);
+    // Spawn trail particles along the line
+    for (let i = 0; i < 15; i++) {
+        const t = rand(0, 1);
+        const px = lerp(fromX, toX, t);
+        const py = lerp(fromY, toY, t);
+        spawnParticles(px, py, 3, '#aaddff', 3, 20, [1, 3]);
+    }
+    game.screenShake.intensity = Math.max(game.screenShake.intensity, 4);
+}
+
+function spawnPlayerHitBurst(x, y) {
+    spawnParticles(x, y, 15, '#ff6644', 4, 25, [2, 5]);
+    spawnParticles(x, y, 8, '#ffaa44', 3, 20, [1, 3]);
+}
+
+function spawnEnemySpawnBurst(x, y) {
+    spawnParticles(x, y, 10, '#6633aa', 3, 30, [2, 5]);
+    spawnParticles(x, y, 5, '#8844cc', 2, 25, [1, 3]);
+}
+
+// ============================================================
+// ENEMIES
+// ============================================================
+let enemies = [];
+
+class Enemy {
+    constructor(wave) {
+        const difficultyMult = 1 + (wave - 1) * 0.08;
+        const roll = Math.random();
+        let type;
+        if (wave <= 2) {
+            type = roll < 0.6 ? 'wisp' : 'stalker';
+        } else if (wave <= 5) {
+            type = roll < 0.4 ? 'wisp' : roll < 0.7 ? 'stalker' : 'guard';
+        } else {
+            type = roll < 0.3 ? 'wisp' : roll < 0.55 ? 'stalker' : roll < 0.8 ? 'guard' : 'phantom';
+        }
+        this.type = type;
+
+        switch (type) {
+            case 'wisp':
+                this.radius = 18;
+                this.speed = 2.0 * difficultyMult;
+                this.weakPointOrbitRadius = 10;
+                this.weakPointRadius = 5;
+                this.orbitSpeed = 3.0;
+                this.hp = 1;
+                this.bodyColorBase = '#1a0830';
+                this.bodyGlow = 'rgba(80, 20, 120, 0.2)';
+                break;
+            case 'stalker':
+                this.radius = 25;
+                this.speed = 1.5 * difficultyMult;
+                this.weakPointOrbitRadius = 14;
+                this.weakPointRadius = 6;
+                this.orbitSpeed = 2.0;
+                this.hp = 1;
+                this.bodyColorBase = '#150a28';
+                this.bodyGlow = 'rgba(60, 10, 100, 0.25)';
+                break;
+            case 'guard':
+                this.radius = 34;
+                this.speed = 1.0 * difficultyMult;
+                this.weakPointOrbitRadius = 20;
+                this.weakPointRadius = 8;
+                this.orbitSpeed = 1.2;
+                this.hp = 1;
+                this.bodyColorBase = '#120825';
+                this.bodyGlow = 'rgba(50, 5, 90, 0.3)';
+                break;
+            case 'phantom':
+                this.radius = 22;
+                this.speed = 2.5 * difficultyMult;
+                this.weakPointOrbitRadius = 12;
+                this.weakPointRadius = 5;
+                this.orbitSpeed = 4.0;
+                this.hp = 1;
+                this.bodyColorBase = '#0f0520';
+                this.bodyGlow = 'rgba(90, 20, 140, 0.3)';
+                break;
+        }
+
+        // Spawn at edges
+        const side = randInt(0, 3);
+        const margin = this.radius + 20;
+        if (side === 0) { this.x = rand(0, W); this.y = -margin; }
+        else if (side === 1) { this.x = W + margin; this.y = rand(0, H); }
+        else if (side === 2) { this.x = rand(0, W); this.y = H + margin; }
+        else { this.x = -margin; this.y = rand(0, H); }
+
+        this.weakPointAngle = rand(0, Math.PI * 2);
+        this.alive = true;
+        this.deathTimer = 0;
+        this.pulsePhase = rand(0, Math.PI * 2);
+        this.spawnAnimTimer = 0;
+        this.spawnAnimDuration = 20;
+        this.hitFlash = 0;
+        this.alpha = 1;
+        this.bodyHue = rand(260, 300);
+    }
+
+    getWeakPointPos() {
+        return {
+            x: this.x + Math.cos(this.weakPointAngle) * this.weakPointOrbitRadius,
+            y: this.y + Math.sin(this.weakPointAngle) * this.weakPointOrbitRadius,
+        };
+    }
+
+    update() {
+        if (!this.alive) {
+            this.deathTimer++;
+            return this.deathTimer < 30;
+        }
+
+        this.spawnAnimTimer++;
+        this.pulsePhase += 0.04;
+        if (this.hitFlash > 0) this.hitFlash--;
+        this.weakPointAngle += this.orbitSpeed * 0.02;
+
+        // Move toward player
+        if (player.alive && !player.isDashing) {
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const d = dist(0, 0, dx, dy);
+            if (d > 0) {
+                this.x += (dx / d) * this.speed;
+                this.y += (dy / d) * this.speed;
+            }
+        }
+
+        // Keep in play area
+        this.x = clamp(this.x, -50, W + 50);
+        this.y = clamp(this.y, -50, H + 50);
+
+        return true;
+    }
+
+    draw(ctx) {
+        if (!this.alive) {
+            // Death dissolve effect
+            const progress = this.deathTimer / 30;
+            const alpha = 1 - progress;
+            const scale = 1 + progress * 0.5;
+
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.6;
+            ctx.translate(this.x, this.y);
+            ctx.scale(scale, scale);
+
+            // Expanding ring
+            ctx.strokeStyle = `rgba(255, 200, 100, ${0.4 * (1 - progress)})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, this.radius * (1 + progress * 1.5), 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.restore();
+
+            const wp = this.getWeakPointPos();
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            const grad = ctx.createRadialGradient(wp.x, wp.y, 0, wp.x, wp.y, this.weakPointRadius * 3);
+            grad.addColorStop(0, `rgba(255, 255, 255, ${0.8 * alpha})`);
+            grad.addColorStop(0.3, `rgba(255, 200, 100, ${0.5 * alpha})`);
+            grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(wp.x, wp.y, this.weakPointRadius * 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            return;
+        }
+
+        const sp = Math.min(this.spawnAnimTimer / this.spawnAnimDuration, 1);
+        const pulseScale = 0.85 + Math.sin(this.pulsePhase) * 0.1;
+        const currentRadius = this.radius * pulseScale * sp;
+
+        // Shadow aura
+        ctx.save();
+        ctx.globalAlpha = 0.4 * sp;
+        const auraGrad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius * 2.5);
+        auraGrad.addColorStop(0, this.bodyGlow);
+        auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = auraGrad;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Body
+        ctx.save();
+        ctx.shadowColor = 'rgba(40, 0, 60, 0.4)';
+        ctx.shadowBlur = 15;
+
+        const bodyGrad = ctx.createRadialGradient(
+            this.x - currentRadius * 0.3, this.y - currentRadius * 0.3, 0,
+            this.x, this.y, currentRadius
+        );
+        bodyGrad.addColorStop(0, `hsl(${this.bodyHue}, 50%, 18%)`);
+        bodyGrad.addColorStop(0.7, this.bodyColorBase);
+        bodyGrad.addColorStop(1, `hsl(${this.bodyHue}, 60%, 5%)`);
+
+        ctx.fillStyle = bodyGrad;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, currentRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Inner glow
+        ctx.save();
+        const innerGrad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, currentRadius * 0.6);
+        innerGrad.addColorStop(0, `hsla(${this.bodyHue}, 60%, 25%, 0.2)`);
+        innerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = innerGrad;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, currentRadius * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Shadow tendrils (decorative)
+        if (sp > 0.8) {
+            ctx.save();
+            ctx.strokeStyle = `hsla(${this.bodyHue}, 40%, 15%, 0.15)`;
+            ctx.lineWidth = 1.5;
+            for (let i = 0; i < 4; i++) {
+                const angle = this.pulsePhase + i * Math.PI / 2;
+                const len = currentRadius * 0.6;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                const endX = this.x + Math.cos(angle) * len;
+                const endY = this.y + Math.sin(angle) * len;
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        // Weak point
+        if (sp > 0.5) {
+            const wp = this.getWeakPointPos();
+            const wpAlpha = Math.min((sp - 0.5) / 0.5, 1);
+            const flashBrightness = this.hitFlash > 0 ? 1.5 : 1;
+
+            ctx.save();
+            ctx.globalAlpha = wpAlpha;
+
+            // Outer glow
+            ctx.shadowColor = '#ff3355';
+            ctx.shadowBlur = 20 * flashBrightness;
+            const wpGrad = ctx.createRadialGradient(wp.x, wp.y, 0, wp.x, wp.y, this.weakPointRadius * 2);
+            wpGrad.addColorStop(0, `rgba(255, 80, 120, ${0.6 * flashBrightness})`);
+            wpGrad.addColorStop(0.5, `rgba(255, 30, 80, ${0.3 * flashBrightness})`);
+            wpGrad.addColorStop(1, 'rgba(255, 0, 50, 0)');
+            ctx.fillStyle = wpGrad;
+            ctx.beginPath();
+            ctx.arc(wp.x, wp.y, this.weakPointRadius * 2 * flashBrightness, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Core
+            const coreGrad = ctx.createRadialGradient(
+                wp.x - this.weakPointRadius * 0.2,
+                wp.y - this.weakPointRadius * 0.2,
+                0, wp.x, wp.y, this.weakPointRadius
+            );
+            coreGrad.addColorStop(0, '#ffccdd');
+            coreGrad.addColorStop(0.3, '#ff4466');
+            coreGrad.addColorStop(1, 'rgba(200, 0, 40, 0)');
+            ctx.fillStyle = coreGrad;
+            ctx.beginPath();
+            ctx.arc(wp.x, wp.y, this.weakPointRadius * flashBrightness, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Bright center dot
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(wp.x, wp.y, this.weakPointRadius * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+    }
+
+    hitWeakPoint() {
+        if (!this.alive) return false;
+        this.alive = false;
+        this.deathTimer = 0;
+        spawnKillBurst(this.x, this.y);
+        return true;
+    }
+}
+
+// ============================================================
+// INPUT HANDLING
+// ============================================================
+const keys = {};
+let mouseX = 0, mouseY = 0;
+let mouseDown = false;
+let touchActive = false;
+let touchStartX = 0, touchStartY = 0;
+let touchCurrentX = 0, touchCurrentY = 0;
+let touchFired = false;
+
+// Keyboard
+document.addEventListener('keydown', (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key.toLowerCase() === 'e' && game.state === STATE.PLAYING) {
+        tryTeleport();
+    }
+    if (e.key === ' ' && game.state === STATE.MENU) {
+        startGame();
+    }
+    if (e.key === ' ' || e.key === 'Enter') {
+        if (game.state === STATE.GAME_OVER || game.state === STATE.MENU) {
+            startGame();
+        }
+    }
+    if (e.key.toLowerCase() === 'r' && game.state === STATE.GAME_OVER) {
+        startGame();
+    }
+});
+document.addEventListener('keyup', (e) => {
+    keys[e.key.toLowerCase()] = false;
+});
+
+// Mouse
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    player.targetX = mouseX;
+    player.targetY = mouseY;
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+        mouseDown = true;
+        const rect = canvas.getBoundingClientRect();
+        mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        if (game.state === STATE.MENU || game.state === STATE.GAME_OVER) {
+            startGame();
+        } else if (game.state === STATE.PLAYING) {
+            tryFireProjectile(mouseX, mouseY);
+        }
+    }
+    if (e.button === 2) {
+        // Right click to teleport
+        if (game.state === STATE.PLAYING) {
+            tryTeleport();
+        }
+    }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (e.button === 0) mouseDown = false;
+});
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Touch
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    touchStartX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+    touchStartY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+    touchCurrentX = touchStartX;
+    touchCurrentY = touchStartY;
+    touchActive = true;
+    touchFired = false;
+
+    if (game.state === STATE.MENU || game.state === STATE.GAME_OVER) {
+        startGame();
+        return;
+    }
+
+    if (game.state === STATE.PLAYING) {
+        player.targetX = touchStartX;
+        player.targetY = touchStartY;
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (!touchActive) return;
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    touchCurrentX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+    touchCurrentY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+    player.targetX = touchCurrentX;
+    player.targetY = touchCurrentY;
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    if (!touchFired && game.state === STATE.PLAYING && touchActive) {
+        // Fire projectile on touch release
+        tryFireProjectile(touchCurrentX, touchCurrentY);
+        touchFired = true;
+    }
+    touchActive = false;
+}, { passive: false });
+
+// Teleport button
+teleportBtn.addEventListener('click', () => {
+    if (game.state === STATE.PLAYING) {
+        tryTeleport();
+    }
+});
+
+teleportBtn.addEventListener('touchstart', (e) => {
+    e.stopPropagation();
+    if (game.state === STATE.PLAYING) {
+        tryTeleport();
+    }
+}, { passive: false });
+
+// ============================================================
+// GAME ACTIONS
+// ============================================================
+function tryFireProjectile(tx, ty) {
+    if (!player.alive || player.isDashing) return;
+    if (game.state !== STATE.PLAYING) return;
+    if (proj.active) return;
+    if (proj.cooldown > 0) return;
+
+    const dx = tx - player.x;
+    const dy = ty - player.y;
+    const d = dist(0, 0, dx, dy);
+    if (d < 1) return;
+
+    proj.x = player.x;
+    proj.y = player.y;
+    proj.vx = (dx / d) * proj.speed;
+    proj.vy = (dy / d) * proj.speed;
+    proj.active = true;
+    proj.bounces = 0;
+    proj.lifetime = 0;
+    proj.trail = [];
+    proj.hitEnemy = false;
+    proj.cooldown = proj.cooldownDuration;
+
+    // Muzzle flash particles
+    spawnParticles(player.x, player.y, 8, '#88ddff', 5, 15, [2, 4]);
+    spawnParticles(player.x, player.y, 5, '#ffffff', 3, 10, [1, 2]);
+}
+
+function tryTeleport() {
+    if (!player.alive || player.isDashing) return;
+    if (game.state !== STATE.PLAYING) return;
+    if (!proj.active) return;
+    if (player.teleportCooldown > 0) return;
+
+    // Start dash
+    player.isDashing = true;
+    player.dashProgress = 0;
+    player.dashFromX = player.x;
+    player.dashFromY = player.y;
+    player.dashEffect = 30;
+
+    // Play visual effect at source
+    spawnTeleportBurst(player.x, player.y, proj.x, proj.y);
+
+    // Teleport player to projectile
+    const projX = proj.x, projY = proj.y;
+    player.x = projX;
+    player.y = projY;
+
+    // Deactivate projectile on teleport
+    proj.active = false;
+    proj.trail = [];
+
+    // Set cooldown
+    player.teleportCooldown = player.teleportDuration;
+
+    // Show flash message
+    game.flashMessage = '光轨穿梭';
+    game.flashTimer = 45;
+
+    game.screenShake.intensity = Math.max(game.screenShake.intensity, 4);
+
+    // End dash after brief delay (using dashProgress as timer)
+    // Actually let's just make it instant with a visual burst
+    player.isDashing = false;
+    player.dashProgress = 1;
+}
+
+function startGame() {
+    if (game.state === STATE.MENU || game.state === STATE.GAME_OVER) {
+        resetGame();
+    }
+    if (game.state === STATE.MENU) {
+        game.state = STATE.PLAYING;
+        startWave();
+    }
+}
+
+function resetGame() {
+    game.state = STATE.MENU;
+    game.score = 0;
+    game.wave = 0;
+    game.enemiesKilled = 0;
+    game.totalKills = 0;
+    game.comboCount = 0;
+    game.flashMessage = '';
+    game.flashTimer = 0;
+    game.screenShake.intensity = 0;
+    game.gameTime = 0;
+
+    player.x = W / 2;
+    player.y = H / 2;
+    player.health = player.maxHealth;
+    player.alive = true;
+    player.invincibleTimer = 0;
+    player.trail = [];
+    player.teleportCooldown = 0;
+    player.isDashing = false;
+    player.moveX = 0;
+    player.moveY = 0;
+
+    proj.active = false;
+    proj.trail = [];
+    proj.cooldown = 0;
+
+    enemies = [];
+    particles = [];
+
+    game.state = STATE.MENU;
+}
+
+function startWave() {
+    game.wave++;
+    game.enemiesKilled = 0;
+    game.spawnCount = 0;
+    game.enemiesInWave = 3 + game.wave * 2 + Math.floor(game.wave / 3) * 2;
+    game.spawnTimer = 0;
+    game.state = STATE.WAVE_INTRO;
+    game.waveIntroTimer = 90; // 1.5 seconds
+}
+
+function spawnEnemy() {
+    if (game.spawnCount >= game.enemiesInWave) return;
+    const enemy = new Enemy(game.wave);
+    enemies.push(enemy);
+    game.spawnCount++;
+    spawnEnemySpawnBurst(enemy.x, enemy.y);
+}
+
+// ============================================================
+// UPDATE FUNCTIONS
+// ============================================================
+function updateMenu() {
+    game.titleAlpha = 0.8 + Math.sin(game.gameTime * 0.02) * 0.2;
+    game.subtitleAlpha = 0.5 + Math.sin(game.gameTime * 0.03 + 1) * 0.3;
+    game.gameTime++;
+}
+
+function updateWaveIntro() {
+    game.waveIntroTimer--;
+    if (game.waveIntroTimer <= 0) {
+        if (game.enemiesKilled >= game.enemiesInWave && game.enemiesInWave > 0) {
+            // Previous wave completed — start next wave
+            startWave();
+        } else {
+            // Initial wave intro finished — begin playing
+            game.state = STATE.PLAYING;
+            game.spawnTimer = 20;
+        }
+    }
+    game.gameTime++;
+}
+
+function updatePlaying() {
+    game.gameTime++;
+
+    // Update screen shake
+    if (game.screenShake.intensity > 0) {
+        game.screenShake.x = (Math.random() - 0.5) * game.screenShake.intensity;
+        game.screenShake.y = (Math.random() - 0.5) * game.screenShake.intensity;
+        game.screenShake.intensity *= 0.9;
+        if (game.screenShake.intensity < 0.3) {
+            game.screenShake.intensity = 0;
+            game.screenShake.x = 0;
+            game.screenShake.y = 0;
+        }
+    }
+
+    // Update flash message
+    if (game.flashTimer > 0) game.flashTimer--;
+
+    // Update combo
+    if (game.comboTimer > 0) {
+        game.comboTimer--;
+        if (game.comboTimer === 0) game.comboCount = 0;
+    }
+
+    // Update player
+    updatePlayer();
+
+    // Update projectile
+    updateProjectile();
+
+    // Update enemies
+    updateEnemies();
+
+    // Update particles
+    updateParticles();
+
+    // Check wave completion
+    const aliveEnemies = enemies.filter(e => e.alive).length;
+    if (game.enemiesKilled >= game.enemiesInWave && aliveEnemies === 0) {
+        // Bonus score for wave completion
+        game.score += game.wave * 50;
+        game.flashMessage = `第 ${game.wave} 波 完成!`;
+        game.flashTimer = 60;
+        game.state = STATE.WAVE_INTRO;
+        game.waveIntroTimer = 120; // 2s pause, then startWave() is called
+    }
+
+    // Spawn enemies
+    if (game.spawnCount < game.enemiesInWave) {
+        game.spawnTimer--;
+        if (game.spawnTimer <= 0) {
+            spawnEnemy();
+            // Decrease spawn interval as wave progresses
+            const interval = Math.max(15, 45 - game.wave * 2);
+            game.spawnTimer = interval + randInt(-10, 10);
+        }
+    }
+
+    // Check game over
+    if (!player.alive) {
+        game.state = STATE.GAME_OVER;
+    }
+}
+
+function updatePlayer() {
+    if (!player.alive) return;
+
+    // Movement
+    let mx = 0, my = 0;
+    if (keys['w'] || keys['arrowup']) my = -1;
+    if (keys['s'] || keys['arrowdown']) my = 1;
+    if (keys['a'] || keys['arrowleft']) mx = -1;
+    if (keys['d'] || keys['arrowright']) mx = 1;
+
+    // Normalize diagonal movement
+    if (mx !== 0 && my !== 0) {
+        const len = Math.sqrt(mx * mx + my * my);
+        mx /= len;
+        my /= len;
+    }
+
+    player.moveX = mx;
+    player.moveY = my;
+
+    if (!player.isDashing) {
+        player.x += mx * player.speed;
+        player.y += my * player.speed;
+    }
+
+    // Keep player in bounds
+    player.x = clamp(player.x, player.radius, W - player.radius);
+    player.y = clamp(player.y, player.radius, H - player.radius);
+
+    // Invincibility
+    if (player.invincibleTimer > 0) player.invincibleTimer--;
+
+    // Teleport cooldown
+    if (player.teleportCooldown > 0) player.teleportCooldown--;
+
+    // Trail
+    player.glowPulse += 0.05;
+    if (mx !== 0 || my !== 0 || game.gameTime % 3 === 0) {
+        player.trail.push({ x: player.x, y: player.y, alpha: 1 });
+        if (player.trail.length > player.maxTrail) {
+            player.trail.shift();
+        }
+    }
+
+    // Fade trail
+    for (let i = 0; i < player.trail.length; i++) {
+        player.trail[i].alpha -= 0.02;
+    }
+    player.trail = player.trail.filter(t => t.alpha > 0);
+
+    // Enemy collision
+    if (player.invincibleTimer <= 0 && !player.isDashing) {
+        for (const enemy of enemies) {
+            if (!enemy.alive) continue;
+            const d = dist(player.x, player.y, enemy.x, enemy.y);
+            if (d < player.radius + enemy.radius) {
+                player.health--;
+                player.invincibleTimer = player.invincibleDuration;
+                spawnPlayerHitBurst(player.x, player.y);
+                game.screenShake.intensity = Math.max(game.screenShake.intensity, 5);
+                if (player.health <= 0) {
+                    player.alive = false;
+                    spawnParticles(player.x, player.y, 40, '#ffdd88', 6, 40, [3, 7]);
+                    spawnParticles(player.x, player.y, 25, '#ffffff', 5, 35, [2, 5]);
+                    game.screenShake.intensity = Math.max(game.screenShake.intensity, 10);
+                }
+                break;
+            }
+        }
+    }
+}
+
+function updateProjectile() {
+    // Cooldown
+    if (proj.cooldown > 0) proj.cooldown--;
+
+    if (!proj.active) return;
+
+    // Movement
+    proj.x += proj.vx;
+    proj.y += proj.vy;
+    proj.lifetime++;
+
+    // Wall bouncing
+    if (proj.x - proj.radius < 0) {
+        proj.x = proj.radius;
+        proj.vx = Math.abs(proj.vx);
+        proj.bounces++;
+        spawnParticles(proj.x, proj.y, 5, '#88ddff', 3, 15, [1, 3]);
+    }
+    if (proj.x + proj.radius > W) {
+        proj.x = W - proj.radius;
+        proj.vx = -Math.abs(proj.vx);
+        proj.bounces++;
+        spawnParticles(proj.x, proj.y, 5, '#88ddff', 3, 15, [1, 3]);
+    }
+    if (proj.y - proj.radius < 0) {
+        proj.y = proj.radius;
+        proj.vy = Math.abs(proj.vy);
+        proj.bounces++;
+        spawnParticles(proj.x, proj.y, 5, '#88ddff', 3, 15, [1, 3]);
+    }
+    if (proj.y + proj.radius > H) {
+        proj.y = H - proj.radius;
+        proj.vy = -Math.abs(proj.vy);
+        proj.bounces++;
+        spawnParticles(proj.x, proj.y, 5, '#88ddff', 3, 15, [1, 3]);
+    }
+
+    // Check deactivation
+    if (proj.bounces >= proj.maxBounces || proj.lifetime >= proj.maxLifetime) {
+        // Fade out effect
+        spawnParticles(proj.x, proj.y, 12, '#aaddff', 4, 25, [2, 5]);
+        proj.active = false;
+        proj.trail = [];
+        return;
+    }
+
+    // Trail
+    proj.trail.push({ x: proj.x, y: proj.y, alpha: 1 });
+    if (proj.trail.length > proj.maxTrail) {
+        proj.trail.shift();
+    }
+    for (let i = 0; i < proj.trail.length; i++) {
+        proj.trail[i].alpha -= 0.015;
+    }
+
+    // Collision with enemy weak points
+    for (const enemy of enemies) {
+        if (!enemy.alive) continue;
+        const wp = enemy.getWeakPointPos();
+        const d = dist(proj.x, proj.y, wp.x, wp.y);
+        if (d < proj.radius + enemy.weakPointRadius) {
+            // Weak point HIT!
+            enemy.hitWeakPoint();
+            game.enemiesKilled++;
+            game.totalKills++;
+            game.score += 10 + game.wave * 2;
+
+            // Combo
+            game.comboCount++;
+            game.comboTimer = 120; // 2 seconds to maintain combo
+            if (game.comboCount >= 3) {
+                const bonus = game.comboCount * 5;
+                game.score += bonus;
+                game.flashMessage = `${game.comboCount}连击! +${bonus}`;
+                game.flashTimer = 40;
+            }
+
+            // Projectile bounces off (continues path)
+            proj.hitEnemy = true;
+
+            // Small visual burst at hit point
+            spawnParticles(wp.x, wp.y, 10, '#ffee88', 4, 20, [2, 4]);
+
+            // Check if all enemies in wave are killed
+            continue;
+        }
+    }
+
+    // Trail cleanup
+    proj.trail = proj.trail.filter(t => t.alpha > 0);
+}
+
+function updateEnemies() {
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const alive = enemies[i].update();
+        if (!alive && enemies[i].deathTimer >= 30) {
+            // Remove fully dead enemies
+            enemies.splice(i, 1);
+        }
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity;
+        p.vx *= p.friction;
+        p.vy *= p.friction;
+        p.life--;
+
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+        }
+    }
+
+    // Cap particles
+    if (particles.length > MAX_PARTICLES) {
+        particles.splice(0, particles.length - MAX_PARTICLES);
+    }
+}
+
+function updateGameOver() {
+    game.gameTime++;
+}
+
+// ============================================================
+// DRAWING FUNCTIONS
+// ============================================================
+function drawBackground() {
+    // Dark gradient background
+    const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
+    bgGrad.addColorStop(0, '#0d0d20');
+    bgGrad.addColorStop(0.4, '#080816');
+    bgGrad.addColorStop(0.8, '#050510');
+    bgGrad.addColorStop(1, '#020208');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Subtle grid
+    ctx.save();
+    ctx.strokeStyle = 'rgba(60, 40, 100, 0.06)';
+    ctx.lineWidth = 1;
+    const gridSize = 60;
+    // Offset grid slightly for a slow parallax feel
+    const offset = game.gameTime * 0.1;
+    for (let x = offset % gridSize; x < W; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+    }
+    for (let y = offset % gridSize; y < H; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    // Ambient floating particles (decorative)
+    ctx.save();
+    const seed = 12345;
+    for (let i = 0; i < 30; i++) {
+        const px = ((Math.sin(seed * (i + 1)) * 0.5 + 0.5) * W +
+                    Math.sin(game.gameTime * 0.005 + i * 1.7) * 20) % W;
+        const py = ((Math.cos(seed * (i + 2)) * 0.5 + 0.5) * H +
+                    Math.cos(game.gameTime * 0.007 + i * 2.3) * 20) % H;
+        const alpha = 0.1 + Math.sin(game.gameTime * 0.01 + i) * 0.05;
+        const size = 1 + Math.sin(game.gameTime * 0.02 + i * 0.5) * 0.5;
+        ctx.fillStyle = `rgba(100, 80, 160, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(px, py, size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+function drawPlayer() {
+    if (!player.alive) return;
+
+    // Invincibility blink
+    if (player.invincibleTimer > 0 && Math.floor(player.invincibleTimer / 4) % 2 === 0) {
+        return; // Blink off
+    }
+
+    const pulse = 1 + Math.sin(player.glowPulse) * 0.05;
+
+    // Trail
+    drawTrail(player.trail, player.radius * 0.6, '#88ddff', '#4466aa');
+
+    // Outer glow
+    ctx.save();
+    const outerGrad = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, player.radius * 3 * pulse);
+    outerGrad.addColorStop(0, 'rgba(100, 180, 255, 0.3)');
+    outerGrad.addColorStop(0.5, 'rgba(60, 120, 200, 0.1)');
+    outerGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = outerGrad;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius * 3 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Body glow
+    ctx.save();
+    ctx.shadowColor = '#4488cc';
+    ctx.shadowBlur = 30;
+    const bodyGrad = ctx.createRadialGradient(
+        player.x - player.radius * 0.2, player.y - player.radius * 0.2, 0,
+        player.x, player.y, player.radius * pulse
+    );
+    bodyGrad.addColorStop(0, '#ffffff');
+    bodyGrad.addColorStop(0.2, '#ddddff');
+    bodyGrad.addColorStop(0.5, '#88ccff');
+    bodyGrad.addColorStop(0.8, '#4488cc');
+    bodyGrad.addColorStop(1, 'rgba(30, 60, 120, 0)');
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Inner highlights
+    ctx.save();
+    const innerGrad = ctx.createRadialGradient(
+        player.x - player.radius * 0.3, player.y - player.radius * 0.3, 0,
+        player.x, player.y, player.radius * 0.5 * pulse
+    );
+    innerGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+    innerGrad.addColorStop(0.5, 'rgba(200, 220, 255, 0.5)');
+    innerGrad.addColorStop(1, 'rgba(200, 220, 255, 0)');
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius * 0.5 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Aim indicator
+    if (!proj.active && game.state === STATE.PLAYING) {
+        ctx.save();
+        const dx = player.targetX - player.x;
+        const dy = player.targetY - player.y;
+        const d = dist(0, 0, dx, dy);
+        if (d > 5) {
+            const nx = dx / d, ny = dy / d;
+            const lineLen = Math.min(d, 200);
+            const endX = player.x + nx * lineLen;
+            const endY = player.y + ny * lineLen;
+
+            // Dashed guide line
+            ctx.setLineDash([4, 6]);
+            ctx.strokeStyle = 'rgba(100, 180, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+
+            // Arrow head
+            const headLen = 10;
+            ctx.setLineDash([]);
+            ctx.fillStyle = 'rgba(100, 180, 255, 0.3)';
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(endX - nx * headLen + ny * headLen * 0.4, endY - ny * headLen - nx * headLen * 0.4);
+            ctx.lineTo(endX - nx * headLen - ny * headLen * 0.4, endY - ny * headLen + nx * headLen * 0.4);
+            ctx.closePath();
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+function drawProjectile() {
+    if (!proj.active) return;
+
+    // Trail
+    drawTrail(proj.trail, proj.radius * 1.5, '#aaddff', '#4466aa');
+
+    // Glow
+    ctx.save();
+    ctx.shadowColor = '#88ddff';
+    ctx.shadowBlur = 25;
+    const grad = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, proj.radius * 3);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+    grad.addColorStop(0.3, 'rgba(150, 210, 255, 0.6)');
+    grad.addColorStop(0.6, 'rgba(80, 160, 220, 0.3)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, proj.radius * 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Core
+    const coreGrad = ctx.createRadialGradient(
+        proj.x - proj.radius * 0.2, proj.y - proj.radius * 0.2, 0,
+        proj.x, proj.y, proj.radius
+    );
+    coreGrad.addColorStop(0, '#ffffff');
+    coreGrad.addColorStop(0.5, '#cceeff');
+    coreGrad.addColorStop(1, 'rgba(80, 180, 255, 0.5)');
+    ctx.fillStyle = coreGrad;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // Afterimage streak (motion blur effect)
+    if (proj.trail.length > 2) {
+        ctx.save();
+        const last = proj.trail[proj.trail.length - 2];
+        if (last) {
+            ctx.strokeStyle = 'rgba(150, 210, 255, 0.3)';
+            ctx.lineWidth = proj.radius * 1.5;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(last.x, last.y);
+            ctx.lineTo(proj.x, proj.y);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // Bounce count indicator
+    if (proj.maxBounces - proj.bounces <= 3) {
+        ctx.save();
+        ctx.fillStyle = `rgba(255, 200, 100, ${0.3 + Math.sin(game.gameTime * 0.2) * 0.2})`;
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${proj.maxBounces - proj.bounces}`, proj.x, proj.y - proj.radius * 3);
+        ctx.restore();
+    }
+}
+
+function drawTrail(trail, baseWidth, color1, color2) {
+    if (trail.length < 2) return;
+
+    ctx.save();
+    for (let i = 0; i < trail.length - 1; i++) {
+        const t = trail[i];
+        const next = trail[i + 1];
+        if (t.alpha <= 0) continue;
+
+        const width = baseWidth * t.alpha * 0.6;
+        const alpha = t.alpha * 0.4;
+
+        ctx.strokeStyle = `rgba(100, 180, 255, ${alpha})`;
+        ctx.lineWidth = width;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(t.x, t.y);
+        ctx.lineTo(next.x, next.y);
+        ctx.stroke();
+
+        // Inner brighter trail
+        ctx.strokeStyle = `rgba(180, 220, 255, ${alpha * 0.5})`;
+        ctx.lineWidth = width * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(t.x, t.y);
+        ctx.lineTo(next.x, next.y);
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function drawEnemies() {
+    for (const enemy of enemies) {
+        enemy.draw(ctx);
+    }
+}
+
+function drawParticles() {
+    ctx.save();
+    for (const p of particles) {
+        const alpha = p.life / p.maxLife;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius * (0.3 + alpha * 0.7), 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+function drawUI() {
+    ctx.save();
+
+    // --- Top bar background ---
+    const barGrad = ctx.createLinearGradient(0, 0, 0, 55);
+    barGrad.addColorStop(0, 'rgba(0, 0, 0, 0.6)');
+    barGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = barGrad;
+    ctx.fillRect(0, 0, W, 55);
+
+    // --- Score ---
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(100, 180, 255, 0.3)';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#aaddff';
+    ctx.font = 'bold 22px "Segoe UI", sans-serif';
+    ctx.fillText(`分数 ${game.score}`, 20, 12);
+
+    // --- Wave info ---
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(150, 180, 200, 0.6)';
+    ctx.font = '13px "Segoe UI", sans-serif';
+    ctx.fillText(`第 ${game.wave} 波`, 20, 38);
+
+    // --- Kills ---
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(150, 180, 200, 0.5)';
+    ctx.font = '12px "Segoe UI", sans-serif';
+    ctx.fillText(`击杀 ${game.totalKills}`, W - 20, 38);
+
+    // --- Top right: Health ---
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = '11px "Segoe UI", sans-serif';
+    ctx.fillText('生命', W - 20, 12);
+
+    // Health bar
+    const healthBarW = 120;
+    const healthBarH = 8;
+    const healthBarX = W - 20 - healthBarW;
+    const healthBarY = 26;
+    const healthPercent = player.health / player.maxHealth;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.beginPath();
+    roundRect(ctx, healthBarX, healthBarY, healthBarW, healthBarH, 4);
+    ctx.fill();
+
+    const hpColor = healthPercent > 0.5 ? '#66dd88' : healthPercent > 0.25 ? '#ddaa44' : '#dd5544';
+    ctx.fillStyle = hpColor;
+    ctx.shadowColor = hpColor;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    roundRect(ctx, healthBarX + 1, healthBarY + 1, Math.max(0, (healthBarW - 2) * healthPercent), healthBarH - 2, 3);
+    ctx.fill();
+
+    // --- Teleport cooldown indicator (near player) ---
+    if (player.teleportCooldown > 0) {
+        const cdPercent = player.teleportCooldown / player.teleportDuration;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = `rgba(100, 180, 255, ${0.3 + Math.sin(game.gameTime * 0.1) * 0.15})`;
+        ctx.font = '11px "Segoe UI", sans-serif';
+        ctx.fillText(`瞬移 ${Math.ceil(cdPercent * player.teleportDuration / 60 * 10) / 10}s`, player.x, player.y - player.radius - 10);
+    }
+
+    // --- Flash message ---
+    if (game.flashTimer > 0) {
+        const flashAlpha = Math.min(game.flashTimer / 20, 1);
+        const scale = Math.max(0.8, 1 - (game.flashTimer / 60) * 0.2);
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.translate(W / 2, H / 2 - 40);
+        ctx.scale(scale, scale);
+        ctx.globalAlpha = flashAlpha;
+        ctx.shadowColor = '#88ddff';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 32px "Segoe UI", sans-serif';
+        ctx.fillText(game.flashMessage, 0, 0);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(100, 180, 255, 0.5)';
+        ctx.font = 'bold 32px "Segoe UI", sans-serif';
+        ctx.fillText(game.flashMessage, 2, 2);
+        ctx.restore();
+    }
+
+    // --- Combo display ---
+    if (game.comboCount >= 3 && game.comboTimer > 0) {
+        const comboAlpha = Math.min(game.comboTimer / 30, 1);
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.globalAlpha = comboAlpha;
+        ctx.shadowColor = '#ffaa44';
+        ctx.shadowBlur = 15;
+        ctx.fillStyle = '#ffcc66';
+        ctx.font = `bold ${20 + Math.sin(game.gameTime * 0.15) * 2}px "Segoe UI", sans-serif`;
+        ctx.fillText(`${game.comboCount}x 连击!`, W / 2, H - 30);
+        ctx.restore();
+    }
+
+    // --- Projectile status ---
+    if (proj.active) {
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = `rgba(100, 180, 255, ${0.3 + Math.sin(game.gameTime * 0.08) * 0.15})`;
+        ctx.font = '11px "Segoe UI", sans-serif';
+        ctx.fillText(`弹射 ${proj.bounces}/${proj.maxBounces}`, W - 20, H - 15);
+    } else if (proj.cooldown > 0) {
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = 'rgba(100, 180, 255, 0.2)';
+        ctx.font = '11px "Segoe UI", sans-serif';
+        ctx.fillText('充能中...', W - 20, H - 15);
+    }
+
+    ctx.restore();
+}
+
+function drawMenu() {
+    drawBackground();
+
+    // Title
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Title glow
+    ctx.shadowColor = '#4488cc';
+    ctx.shadowBlur = 40;
+    ctx.fillStyle = `rgba(100, 180, 255, ${game.titleAlpha * 0.3})`;
+    ctx.font = 'bold 72px "Segoe UI", sans-serif';
+    ctx.fillText('光粒暗影', W / 2 + 3, H / 2 - 60 + 3);
+
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = `rgba(200, 230, 255, ${game.titleAlpha})`;
+    ctx.font = 'bold 72px "Segoe UI", sans-serif';
+    ctx.fillText('光粒暗影', W / 2, H / 2 - 60);
+
+    // Subtitle
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = `rgba(150, 180, 200, ${game.subtitleAlpha})`;
+    ctx.font = '16px "Segoe UI", sans-serif';
+    ctx.fillText('Light Particle Shadow', W / 2, H / 2 - 5);
+
+    // Instructions
+    ctx.fillStyle = 'rgba(150, 180, 200, 0.5)';
+    ctx.font = '14px "Segoe UI", sans-serif';
+    ctx.fillText('WASD 移动  |  鼠标瞄准点击射击  |  E / 右键 瞬移', W / 2, H / 2 + 50);
+
+    const blink = Math.sin(game.gameTime * 0.06) > 0;
+    if (blink) {
+        ctx.fillStyle = 'rgba(200, 230, 255, 0.8)';
+        ctx.font = '18px "Segoe UI", sans-serif';
+        ctx.fillText('点击或按空格键开始', W / 2, H / 2 + 100);
+    }
+
+    // Decorative particles
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < 15; i++) {
+        const angle = game.gameTime * 0.01 + i * 2.1;
+        const radius = 120 + Math.sin(game.gameTime * 0.02 + i) * 40;
+        const px = W / 2 + Math.cos(angle) * radius;
+        const py = H / 2 - 30 + Math.sin(angle) * radius * 0.5;
+        const alpha = 0.2 + Math.sin(game.gameTime * 0.03 + i * 0.7) * 0.1;
+        ctx.fillStyle = `rgba(100, 180, 255, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(px, py, 1.5 + Math.sin(game.gameTime * 0.05 + i) * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Controls detail
+    ctx.fillStyle = 'rgba(100, 140, 180, 0.35)';
+    ctx.font = '12px "Segoe UI", sans-serif';
+    ctx.fillText('弱点一击必杀 · 光轨穿梭战场', W / 2, H / 2 + 145);
+
+    ctx.restore();
+}
+
+function drawWaveIntro() {
+    // Still draw game elements behind
+    drawBackground();
+    drawEnemies();
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const progress = 1 - game.waveIntroTimer / 90;
+    const alpha = Math.min(progress * 2, 1) * (game.waveIntroTimer < 30 ? game.waveIntroTimer / 30 : 1);
+    const scale = Math.min(1, progress * 1.5);
+
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+
+    ctx.shadowColor = '#8844cc';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#cc88ff';
+    ctx.font = 'bold 48px "Segoe UI", sans-serif';
+    ctx.fillText(`第 ${game.wave} 波`, 0, -20);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(150, 130, 180, 0.6)';
+    ctx.font = '16px "Segoe UI", sans-serif';
+    ctx.fillText(`${game.enemiesInWave} 个暗影敌人`, 0, 25);
+
+    ctx.restore();
+}
+
+function drawGameOver() {
+    // Dim the scene
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.shadowColor = '#ff4444';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ff6666';
+    ctx.font = 'bold 52px "Segoe UI", sans-serif';
+    ctx.fillText('暗影吞噬', W / 2, H / 2 - 80);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(200, 200, 200, 0.7)';
+    ctx.font = '20px "Segoe UI", sans-serif';
+    ctx.fillText(`最终得分: ${game.score}`, W / 2, H / 2 - 20);
+
+    ctx.fillStyle = 'rgba(150, 180, 200, 0.5)';
+    ctx.font = '16px "Segoe UI", sans-serif';
+    ctx.fillText(`存活至第 ${game.wave} 波 · 击杀 ${game.totalKills} 个敌人`, W / 2, H / 2 + 20);
+
+    const blink = Math.sin(game.gameTime * 0.06) > 0;
+    if (blink) {
+        ctx.fillStyle = 'rgba(200, 230, 255, 0.7)';
+        ctx.font = '18px "Segoe UI", sans-serif';
+        ctx.fillText('按 R 或 空格键 重新开始', W / 2, H / 2 + 70);
+    }
+
+    ctx.restore();
+
+    // Still draw remaining particles
+    drawParticles();
+}
+
+// ============================================================
+// MAIN GAME LOOP
+// ============================================================
+function gameLoop() {
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+
+    // Apply screen shake
+    ctx.translate(game.screenShake.x, game.screenShake.y);
+
+    switch (game.state) {
+        case STATE.MENU:
+            updateMenu();
+            drawMenu();
+            break;
+
+        case STATE.WAVE_INTRO:
+            updateWaveIntro();
+            drawWaveIntro();
+            drawPlayer();
+            drawParticles();
+            drawUI();
+            break;
+
+        case STATE.PLAYING:
+            updatePlaying();
+            drawBackground();
+            drawEnemies();
+            drawProjectile();
+            drawPlayer();
+            drawParticles();
+            drawUI();
+            break;
+
+        case STATE.GAME_OVER:
+            updateGameOver();
+            // Draw scene behind
+            drawBackground();
+            drawEnemies();
+            drawProjectile();
+            drawPlayer();
+            drawParticles();
+            drawGameOver();
+            break;
+    }
+
+    ctx.restore();
+
+    // Update teleport button
+    updateTeleportButton();
+
+    requestAnimationFrame(gameLoop);
+}
+
+function updateTeleportButton() {
+    const canTP = proj.active && player.teleportCooldown <= 0 && player.alive && game.state === STATE.PLAYING;
+    if (canTP) {
+        teleportBtn.style.opacity = '1';
+        tpCooldownOverlay.style.display = 'none';
+    } else {
+        teleportBtn.style.opacity = '0.4';
+        if (player.teleportCooldown > 0) {
+            tpCooldownOverlay.style.display = 'flex';
+            const pct = player.teleportCooldown / player.teleportDuration;
+            const circumference = Math.PI * 66; // approx
+            tpCooldownOverlay.style.background = `conic-gradient(rgba(0,0,0,0.5) ${(1-pct)*100}%, transparent ${(1-pct)*100}%)`;
+        } else {
+            tpCooldownOverlay.style.display = 'none';
+        }
+    }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+    player.x = W / 2;
+    player.y = H / 2;
+    player.targetX = W / 2;
+    player.targetY = H / 2;
+
+    // Pre-populate with ambient particles
+    for (let i = 0; i < 20; i++) {
+        particles.push({
+            x: rand(0, W),
+            y: rand(0, H),
+            vx: rand(-0.1, 0.1),
+            vy: rand(-0.1, 0.1),
+            life: rand(30, 100),
+            maxLife: 100,
+            color: 'rgba(100, 80, 160, 0.3)',
+            radius: rand(1, 2),
+            gravity: 0,
+            friction: 0.99,
+        });
+    }
+
+    gameLoop();
+}
+
+init();
+
+})();
+</script>
+</body>
+</html>

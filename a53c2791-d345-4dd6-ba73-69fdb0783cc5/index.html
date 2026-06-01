@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>猫咪云朵跳跃</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        #gameContainer {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 0 40px rgba(255, 200, 100, 0.3);
+        }
+        canvas {
+            display: block;
+            background: linear-gradient(180deg, #b3e5fc 0%, #e1f5fe 60%, #fff8e1 100%);
+        }
+        #ui {
+            position: absolute;
+            top: 16px;
+            left: 0;
+            right: 0;
+            padding: 0 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            font-size: 22px;
+            font-weight: bold;
+            color: #5d4037;
+            text-shadow: 0 2px 8px rgba(255, 255, 255, 0.7);
+        }
+        #scoreLabel {
+            background: rgba(255, 255, 255, 0.5);
+            padding: 6px 18px;
+            border-radius: 30px;
+            backdrop-filter: blur(4px);
+        }
+        #restartBtn {
+            pointer-events: auto;
+            background: #ffa726;
+            border: none;
+            padding: 8px 24px;
+            border-radius: 30px;
+            font-size: 20px;
+            font-weight: bold;
+            color: #4e342e;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #ef6c00;
+            transition: all 0.1s;
+            display: none;
+        }
+        #restartBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 0 #ef6c00;
+        }
+        #restartBtn:active {
+            transform: translateY(4px);
+            box-shadow: 0 0px 0 #ef6c00;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <span id="scoreLabel">⭐ 0</span>
+            <button id="restartBtn">🔄 再来一次</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreLabel = document.getElementById('scoreLabel');
+        const restartBtn = document.getElementById('restartBtn');
+
+        const W = 800,
+            H = 600;
+        const GRAVITY = 0.55;
+        const JUMP_FORCE = -11.5;
+        const MOVE_SPEED = 5.2;
+        const CAT_W = 36;
+        const CAT_H = 38;
+
+        // ----- 游戏状态 -----
+        let gameOver = false;
+        let score = 0;
+        let frameCount = 0;
+
+        // ----- 猫咪 -----
+        const cat = {
+            x: 380,
+            y: 200,
+            vx: 0,
+            vy: 0,
+            onGround: false,
+            facingRight: true,
+            jumpBuffer: 0,
+            // 动画
+            walkCycle: 0,
+            earWiggle: 0
+        };
+
+        // ----- 云朵 -----
+        let clouds = [];
+        const CLOUD_W = 130;
+        const CLOUD_H = 34;
+
+        // ----- 星星 -----
+        let stars = [];
+        const STAR_RADIUS = 14;
+
+        // ----- 小鸟 -----
+        let birds = [];
+        const BIRD_W = 44;
+        const BIRD_H = 30;
+
+        // ----- 按键 -----
+        const keys = { left: false, right: false, jump: false };
+
+        // ----- 初始化函数 -----
+        function initClouds() {
+            // 手工放置 12 朵云，确保跳跃路径合理
+            const positions = [
+                [80, 540],
+                [260, 520],
+                [460, 535],
+                [660, 510],
+                [140, 440],
+                [380, 420],
+                [590, 400],
+                [50, 340],
+                [270, 310],
+                [510, 290],
+                [700, 330],
+                [180, 220],
+                [420, 170],
+                [620, 210],
+                [320, 100]
+            ];
+            clouds = positions.map(([x, y]) => ({
+                x: x,
+                y: y,
+                w: CLOUD_W + (Math.random() * 30 - 15),
+                h: CLOUD_H + (Math.random() * 8 - 4),
+                drift: Math.random() * 0.3 - 0.15,
+                offset: Math.random() * 1000
+            }));
+        }
+
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < 6; i++) {
+                spawnStar();
+            }
+        }
+
+        function spawnStar() {
+            // 在随机云朵附近生成星星
+            if (clouds.length === 0) return;
+            const cloud = clouds[Math.floor(Math.random() * clouds.length)];
+            const star = {
+                x: cloud.x + cloud.w / 2 + (Math.random() * 100 - 50),
+                y: cloud.y - 25 - Math.random() * 60,
+                r: STAR_RADIUS,
+                sparkle: Math.random() * Math.PI * 2,
+                collected: false,
+                respawnTimer: 0
+            };
+            // 限制在画布内
+            star.x = Math.max(30, Math.min(W - 30, star.x));
+            star.y = Math.max(30, Math.min(H - 40, star.y));
+            stars.push(star);
+        }
+
+        function initBirds() {
+            birds = [];
+            for (let i = 0; i < 2; i++) {
+                const side = Math.random() > 0.5 ? 0 : W;
+                birds.push({
+                    x: side,
+                    y: 120 + Math.random() * 280,
+                    vx: (side === 0 ? 1 : -1) * (1.8 + Math.random() * 1.2),
+                    vy: (Math.random() - 0.5) * 0.5,
+                    wingPhase: Math.random() * Math.PI * 2,
+                    flapSpeed: 0.08 + Math.random() * 0.04
+                });
+            }
+        }
+
+        function resetGame() {
+            gameOver = false;
+            score = 0;
+            scoreLabel.textContent = '⭐ 0';
+            restartBtn.style.display = 'none';
+
+            cat.x = 320;
+            cat.y = 100;
+            cat.vx = 0;
+            cat.vy = 0;
+            cat.onGround = false;
+            cat.facingRight = true;
+            cat.walkCycle = 0;
+
+            initClouds();
+            initStars();
+            initBirds();
+            frameCount = 0;
+        }
+
+        // ----- 碰撞检测 -----
+        function rectCollide(ax, ay, aw, ah, bx, by, bw, bh) {
+            return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+        }
+
+        function dist(x1, y1, x2, y2) {
+            return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+        }
+
+        // ----- 更新逻辑 -----
+        function update() {
+            if (gameOver) return;
+            frameCount++;
+
+            // 1. 猫咪输入
+            let moveX = 0;
+            if (keys.left) moveX = -1;
+            if (keys.right) moveX = 1;
+
+            if (moveX !== 0) {
+                cat.facingRight = moveX > 0;
+                cat.walkCycle += 0.15;
+            } else {
+                cat.walkCycle *= 0.9;
+            }
+
+            cat.vx = moveX * MOVE_SPEED;
+
+            // 跳跃
+            if (keys.jump && cat.onGround) {
+                cat.vy = JUMP_FORCE;
+                cat.onGround = false;
+                keys.jump = false; // 需要松开再按才能再次跳跃
+            }
+
+            // 重力
+            cat.vy += GRAVITY;
+            if (cat.vy > 15) cat.vy = 15;
+
+            // 水平移动
+            cat.x += cat.vx;
+            // 边界
+            if (cat.x < 0) { cat.x = 0;
+                cat.vx = 0; }
+            if (cat.x + CAT_W > W) { cat.x = W - CAT_W;
+                cat.vx = 0; }
+
+            // 垂直移动
+            cat.y += cat.vy;
+            cat.onGround = false;
+
+            // 云朵碰撞
+            for (const cloud of clouds) {
+                const cx = cloud.x + cloud.w / 2 - 10;
+                const cy = cloud.y + cloud.h / 2;
+                // 只检测从上方落下
+                if (cat.vy >= 0 &&
+                    cat.x + CAT_W > cloud.x + 8 && cat.x < cloud.x + cloud.w - 8 &&
+                    cat.y + CAT_H >= cloud.y && cat.y + CAT_H <= cloud.y + cloud.h + 12) {
+                    cat.y = cloud.y - CAT_H;
+                    cat.vy = 0;
+                    cat.onGround = true;
+                    break;
+                }
+            }
+
+            // 掉出底部 → 游戏结束
+            if (cat.y > H + 50) {
+                gameOver = true;
+                restartBtn.style.display = 'block';
+                return;
+            }
+
+            // 云朵漂移
+            for (const cloud of clouds) {
+                cloud.x += Math.sin(frameCount * 0.005 + cloud.offset) * cloud.drift;
+                // 边界限制
+                cloud.x = Math.max(-10, Math.min(W - cloud.w + 10, cloud.x));
+            }
+
+            // 星星收集
+            for (const star of stars) {
+                if (star.collected) continue;
+                const cx = cat.x + CAT_W / 2;
+                const cy = cat.y + CAT_H / 2;
+                if (dist(cx, cy, star.x, star.y) < STAR_RADIUS + 16) {
+                    star.collected = true;
+                    star.respawnTimer = 60;
+                    score++;
+                    scoreLabel.textContent = '⭐ ' + score;
+                }
+            }
+
+            // 重生星星
+            for (let i = stars.length - 1; i >= 0; i--) {
+                const star = stars[i];
+                if (star.collected) {
+                    star.respawnTimer--;
+                    if (star.respawnTimer <= 0) {
+                        stars.splice(i, 1);
+                        spawnStar();
+                    }
+                }
+            }
+
+            // 小鸟更新
+            for (const bird of birds) {
+                bird.x += bird.vx;
+                bird.y += bird.vy;
+                bird.wingPhase += bird.flapSpeed;
+
+                // 水平反弹
+                if (bird.x < -40) { bird.x = -40;
+                    bird.vx = Math.abs(bird.vx); }
+                if (bird.x > W + 40) { bird.x = W + 40;
+                    bird.vx = -Math.abs(bird.vx); }
+                // 垂直限制
+                if (bird.y < 30) { bird.y = 30;
+                    bird.vy = Math.abs(bird.vy) * 0.5; }
+                if (bird.y > H - 80) { bird.y = H - 80;
+                    bird.vy = -Math.abs(bird.vy) * 0.5; }
+
+                // 随机微调垂直速度
+                if (Math.random() < 0.01) {
+                    bird.vy += (Math.random() - 0.5) * 0.8;
+                    bird.vy = Math.max(-1.5, Math.min(1.5, bird.vy));
+                }
+
+                // 与猫咪碰撞检测
+                if (!gameOver) {
+                    const margin = 8;
+                    if (rectCollide(cat.x + margin, cat.y + margin, CAT_W - margin * 2, CAT_H - margin * 2,
+                            bird.x - 4, bird.y - 4, BIRD_W + 8, BIRD_H + 8)) {
+                        gameOver = true;
+                        restartBtn.style.display = 'block';
+                        break;
+                    }
+                }
+            }
+
+            // 猫咪耳朵动画
+            cat.earWiggle = Math.sin(frameCount * 0.03) * 2;
+
+            // 如果游戏结束，显示按钮
+            if (gameOver) {
+                restartBtn.style.display = 'block';
+            }
+        }
+
+        // ----- 绘制函数 -----
+        function drawCat(x, y) {
+            const cx = x + CAT_W / 2;
+            const cy = y + CAT_H / 2;
+            const dir = cat.facingRight ? 1 : -1;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(dir, 1);
+
+            // ---- 身体 ----
+            ctx.fillStyle = '#f5e6d3';
+            ctx.shadowColor = 'rgba(0,0,0,0.1)';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.ellipse(0, 10, 16, 18, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 肚皮
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#fce4d6';
+            ctx.beginPath();
+            ctx.ellipse(0, 14, 10, 12, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // ---- 头部 ----
+            ctx.shadowBlur = 6;
+            ctx.fillStyle = '#f5e6d3';
+            ctx.beginPath();
+            ctx.arc(0, -8, 18, 0, Math.PI * 2);
+            ctx.fill();
+
+            // ---- 耳朵 ----
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#f5e6d3';
+            // 左耳
+            ctx.beginPath();
+            ctx.moveTo(-16, -18);
+            ctx.lineTo(-8, -32 + cat.earWiggle * 0.5);
+            ctx.lineTo(-4, -16);
+            ctx.closePath();
+            ctx.fill();
+            // 右耳
+            ctx.beginPath();
+            ctx.moveTo(16, -18);
+            ctx.lineTo(8, -32 - cat.earWiggle * 0.5);
+            ctx.lineTo(4, -16);
+            ctx.closePath();
+            ctx.fill();
+
+            // 耳朵内部粉色
+            ctx.fillStyle = '#f8bbd0';
+            ctx.beginPath();
+            ctx.moveTo(-14, -19);
+            ctx.lineTo(-8, -28 + cat.earWiggle * 0.4);
+            ctx.lineTo(-5, -18);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(14, -19);
+            ctx.lineTo(8, -28 - cat.earWiggle * 0.4);
+            ctx.lineTo(5, -18);
+            ctx.closePath();
+            ctx.fill();
+
+            // ---- 眼睛 ----
+            ctx.shadowBlur = 0;
+            // 眼白
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.ellipse(-7, -10, 6, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(7, -10, 6, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 瞳孔
+            const lookY = -0.5;
+            ctx.fillStyle = '#4a3728';
+            ctx.beginPath();
+            ctx.ellipse(-7 + 1, -10 + lookY, 3.5, 5.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(7 + 1, -10 + lookY, 3.5, 5.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 高光
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(-5, -13, 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(9, -13, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // ---- 鼻子 ----
+            ctx.fillStyle = '#f48fb1';
+            ctx.beginPath();
+            ctx.moveTo(0, -6);
+            ctx.lineTo(-3, -3);
+            ctx.lineTo(3, -3);
+            ctx.closePath();
+            ctx.fill();
+
+            // ---- 嘴巴 ----
+            ctx.strokeStyle = '#8d6e63';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(-4, -2);
+            ctx.quadraticCurveTo(-2, 1, 0, -2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(4, -2);
+            ctx.quadraticCurveTo(2, 1, 0, -2);
+            ctx.stroke();
+
+            // 微笑
+            ctx.strokeStyle = '#8d6e63';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, -3, 5, 0.2, Math.PI - 0.2);
+            ctx.stroke();
+
+            // ---- 胡须 ----
+            ctx.strokeStyle = '#a1887f';
+            ctx.lineWidth = 1;
+            // 左胡须
+            ctx.beginPath();
+            ctx.moveTo(-6, -5);
+            ctx.lineTo(-22, -8);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(-6, -3);
+            ctx.lineTo(-22, -3);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(-6, -1);
+            ctx.lineTo(-22, 2);
+            ctx.stroke();
+            // 右胡须
+            ctx.beginPath();
+            ctx.moveTo(6, -5);
+            ctx.lineTo(22, -8);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(6, -3);
+            ctx.lineTo(22, -3);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(6, -1);
+            ctx.lineTo(22, 2);
+            ctx.stroke();
+
+            // ---- 尾巴 ----
+            ctx.shadowBlur = 4;
+            ctx.strokeStyle = '#f5e6d3';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            const tailWag = Math.sin(frameCount * 0.08) * 6;
+            ctx.beginPath();
+            ctx.moveTo(-12, 12);
+            ctx.quadraticCurveTo(-28 + tailWag, 6, -18 + tailWag * 1.5, -4);
+            ctx.stroke();
+
+            // 尾巴尖
+            ctx.fillStyle = '#fce4d6';
+            ctx.beginPath();
+            ctx.arc(-18 + tailWag * 1.5, -4, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
+
+        function drawCloud(cloud) {
+            const { x, y, w, h } = cloud;
+            ctx.save();
+
+            // 云朵阴影
+            ctx.shadowColor = 'rgba(0,0,0,0.06)';
+            ctx.shadowBlur = 20;
+            ctx.shadowOffsetY = 6;
+
+            // 主要云朵 - 用多个圆堆叠
+            const baseColor = '#ffffff';
+            const highlightColor = '#f5faff';
+
+            const circles = [
+                [w * 0.2, h * 0.5, w * 0.28],
+                [w * 0.5, h * 0.3, w * 0.32],
+                [w * 0.8, h * 0.45, w * 0.26],
+                [w * 0.35, h * 0.7, w * 0.22],
+                [w * 0.65, h * 0.65, w * 0.24],
+                [w * 0.5, h * 0.7, w * 0.20]
+            ];
+
+            for (const [cx, cy, r] of circles) {
+                const grad = ctx.createRadialGradient(
+                    x + cx - r * 0.2, y + cy - r * 0.2, r * 0.1,
+                    x + cx, y + cy, r
+                );
+                grad.addColorStop(0, highlightColor);
+                grad.addColorStop(0.7, baseColor);
+                grad.addColorStop(1, '#e8f0fe');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(x + cx, y + cy, r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
+
+        function drawStar(star) {
+            if (star.collected) return;
+            const { x, y, r, sparkle } = star;
+            ctx.save();
+
+            const pulse = 1 + Math.sin(frameCount * 0.06 + sparkle) * 0.06;
+            const size = r * pulse;
+
+            // 发光
+            const glow = ctx.createRadialGradient(x, y, 0, x, y, size * 2.5);
+            glow.addColorStop(0, 'rgba(255, 215, 0, 0.3)');
+            glow.addColorStop(0.5, 'rgba(255, 200, 50, 0.1)');
+            glow.addColorStop(1, 'rgba(255, 200, 50, 0)');
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(x, y, size * 2.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 星形
+            ctx.shadowColor = 'rgba(255, 200, 50, 0.5)';
+            ctx.shadowBlur = 20;
+
+            const points = 5;
+            const outer = size;
+            const inner = size * 0.4;
+            const rot = Math.PI / 2 + sparkle * 0.1;
+
+            ctx.fillStyle = '#ffd54f';
+            ctx.beginPath();
+            for (let i = 0; i < points * 2; i++) {
+                const angle = rot + (i * Math.PI) / points;
+                const rad = i % 2 === 0 ? outer : inner;
+                const px = x + Math.cos(angle) * rad;
+                const py = y + Math.sin(angle) * rad;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            // 高光
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.beginPath();
+            ctx.arc(x - size * 0.15, y - size * 0.15, size * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 闪烁小点
+            for (let i = 0; i < 3; i++) {
+                const angle = sparkle + i * 2.1 + frameCount * 0.02;
+                const dist = size * 1.3 + Math.sin(angle * 2) * 4;
+                const sx = x + Math.cos(angle) * dist;
+                const sy = y + Math.sin(angle) * dist;
+                const alpha = 0.3 + Math.sin(angle * 3 + frameCount * 0.05) * 0.3;
+                ctx.fillStyle = `rgba(255,255,200,${alpha})`;
+                ctx.beginPath();
+                ctx.arc(sx, sy, 2 + Math.sin(angle * 2 + frameCount * 0.04) * 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        function drawBird(bird) {
+            const { x, y, vx, wingPhase } = bird;
+            ctx.save();
+            ctx.translate(x, y);
+            const dir = vx > 0 ? 1 : -1;
+            ctx.scale(dir, 1);
+
+            // 身体
+            ctx.shadowColor = 'rgba(0,0,0,0.1)';
+            ctx.shadowBlur = 10;
+            ctx.fillStyle = '#5c6bc0';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 20, 14, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 肚子
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#7986cb';
+            ctx.beginPath();
+            ctx.ellipse(2, 4, 12, 9, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 翅膀
+            const wingY = Math.sin(wingPhase) * 10;
+            ctx.fillStyle = '#3949ab';
+            ctx.beginPath();
+            ctx.ellipse(-4, -6 + wingY * 0.5, 14, 6 + Math.abs(wingY) * 0.3, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 翅膀2
+            ctx.fillStyle = '#303f9f';
+            ctx.beginPath();
+            ctx.ellipse(-2, -4 + wingY, 12, 5, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 头部
+            ctx.fillStyle = '#5c6bc0';
+            ctx.beginPath();
+            ctx.arc(18, -4, 10, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 眼睛
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(22, -6, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#1a1a2e';
+            ctx.beginPath();
+            ctx.arc(23, -6, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(24, -8, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 喙
+            ctx.fillStyle = '#ff8a65';
+            ctx.beginPath();
+            ctx.moveTo(28, -4);
+            ctx.lineTo(36, -2);
+            ctx.lineTo(28, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            // 尾巴
+            ctx.fillStyle = '#3949ab';
+            ctx.beginPath();
+            ctx.moveTo(-18, -2);
+            ctx.lineTo(-28, -8 + Math.sin(wingPhase * 0.7) * 3);
+            ctx.lineTo(-26, 2);
+            ctx.lineTo(-30, 4 + Math.cos(wingPhase * 0.5) * 2);
+            ctx.lineTo(-20, 4);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawBackground() {
+            // 远处小云朵装饰
+            ctx.save();
+            ctx.globalAlpha = 0.2;
+            for (let i = 0; i < 8; i++) {
+                const bx = (i * 137 + 30) % W;
+                const by = (i * 89 + 20) % 200 + 10;
+                const bw = 40 + (i % 3) * 20;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.ellipse(bx, by, bw * 0.5, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(bx + bw * 0.3, by + 2, bw * 0.35, 7, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+
+            // 底部云海装饰
+            ctx.save();
+            ctx.globalAlpha = 0.15;
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 6; i++) {
+                const bx = i * 160 - 20;
+                const by = H - 30 + Math.sin(i * 2.3) * 10;
+                ctx.beginPath();
+                ctx.ellipse(bx, by, 120 + Math.sin(i * 1.7) * 30, 20, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawGameOver() {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillRect(0, 0, W, H);
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // 标题
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 20;
+            ctx.font = 'bold 64px Arial, sans-serif';
+            ctx.fillStyle = '#ffcc80';
+            ctx.fillText('😿 游戏结束', W / 2, H / 2 - 50);
+
+            // 得分
+            ctx.shadowBlur = 10;
+            ctx.font = 'bold 36px Arial, sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('⭐ 得分: ' + score, W / 2, H / 2 + 40);
+
+            // 提示
+            ctx.shadowBlur = 0;
+            ctx.font = '20px Arial, sans-serif';
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillText('点击 "再来一次" 重新挑战', W / 2, H / 2 + 110);
+
+            ctx.restore();
+        }
+
+        // ----- 主渲染循环 -----
+        function draw() {
+            ctx.clearRect(0, 0, W, H);
+
+            drawBackground();
+
+            // 绘制云朵
+            for (const cloud of clouds) {
+                drawCloud(cloud);
+            }
+
+            // 绘制星星
+            for (const star of stars) {
+                drawStar(star);
+            }
+
+            // 绘制猫咪
+            drawCat(cat.x, cat.y);
+
+            // 绘制小鸟
+            for (const bird of birds) {
+                drawBird(bird);
+            }
+
+            // 游戏结束覆盖层
+            if (gameOver) {
+                drawGameOver();
+            }
+
+            // 小提示 (仅开始时显示)
+            if (frameCount < 120 && !gameOver) {
+                ctx.save();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = '18px Arial, sans-serif';
+                ctx.fillStyle = 'rgba(92,64,55,0.6)';
+                const msg = '⬅ ➡ 移动  |  空格/⬆ 跳跃  |  收集 ⭐ 躲避 🐦';
+                ctx.fillText(msg, W / 2, H - 30);
+                ctx.restore();
+            }
+        }
+
+        // ----- 游戏循环 -----
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ----- 输入处理 -----
+        document.addEventListener('keydown', (e) => {
+            const key = e.key;
+            if (key === 'ArrowLeft' || key === 'a' || key === 'A') {
+                keys.left = true;
+                e.preventDefault();
+            }
+            if (key === 'ArrowRight' || key === 'd' || key === 'D') {
+                keys.right = true;
+                e.preventDefault();
+            }
+            if (key === ' ' || key === 'ArrowUp' || key === 'w' || key === 'W') {
+                e.preventDefault();
+                if (cat.onGround) {
+                    keys.jump = true;
+                } else {
+                    // 允许在离开地面后一小段时间内仍能跳跃（缓冲）
+                    if (frameCount - cat.jumpBuffer < 6) {
+                        keys.jump = true;
+                    }
+                }
+            }
+            if (key === 'r' || key === 'R') {
+                if (gameOver) resetGame();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const key = e.key;
+            if (key === 'ArrowLeft' || key === 'a' || key === 'A') {
+                keys.left = false;
+                e.preventDefault();
+            }
+            if (key === 'ArrowRight' || key === 'd' || key === 'D') {
+                keys.right = false;
+                e.preventDefault();
+            }
+            if (key === ' ' || key === 'ArrowUp' || key === 'w' || key === 'W') {
+                e.preventDefault();
+                // 不重置 jump 状态，由更新逻辑处理
+            }
+        });
+
+        // 防止页面滚动
+        window.addEventListener('keydown', (e) => {
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        // 按钮事件
+        restartBtn.addEventListener('click', resetGame);
+
+        // 触摸/移动端支持 (简化)
+        let touchStartX = 0;
+        let touchStartY = 0;
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            touchStartX = touch.clientX - rect.left;
+            touchStartY = touch.clientY - rect.top;
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const x = touch.clientX - rect.left;
+            const dx = x - touchStartX;
+            if (dx > 20) { keys.right = true;
+                keys.left = false; } else if (dx < -20) { keys.left = true;
+                keys.right = false; } else { keys.left = false;
+                keys.right = false; }
+            touchStartX = x;
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            keys.left = false;
+            keys.right = false;
+            // 上滑跳跃
+            const touch = e.changedTouches[0];
+            const rect = canvas.getBoundingClientRect();
+            const y = touch.clientY - rect.top;
+            if (touchStartY - y > 30 && cat.onGround) {
+                keys.jump = true;
+            }
+        }, { passive: false });
+
+        // ----- 启动游戏 -----
+        resetGame();
+        gameLoop();
+
+        // 窗口失焦时释放按键，防止卡键
+        window.addEventListener('blur', () => {
+            keys.left = false;
+            keys.right = false;
+            keys.jump = false;
+        });
+    </script>
+
+</body>
+</html>

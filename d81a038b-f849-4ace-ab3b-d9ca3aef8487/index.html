@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  一个 3D 收集游戏，玩家控制发光球体在平台上移动，收集旋转的彩色宝石，避开移动的红色方块敌人。使用 Three.js 渲染。
+-->
+<meta name="description" content="一个 3D 收集游戏，玩家控制发光球体在平台上移动，收集旋转的彩色宝石，避开移动的红色方块敌人。使用 Three.js 渲染。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>3D 宝石收集游戏</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; font-family: sans-serif; touch-action: none; }
+canvas { display: block; }
+#ui { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; padding: 16px; }
+#score { color: #fff; font-size: 18px; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
+#hp { color: #ff6b6b; font-size: 18px; text-shadow: 0 2px 8px rgba(0,0,0,0.8); float: right; }
+#msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  color: #fff; font-size: 32px; text-align: center; text-shadow: 0 4px 20px rgba(0,0,0,0.9);
+  pointer-events: none; display: none; }
+#msg small { display: block; font-size: 16px; color: #aaa; margin-top: 8px; }
+.score-popup { position: absolute; pointer-events: none; color: #ffd700; font-size: 28px;
+  font-weight: bold; text-shadow: 0 0 20px rgba(255,215,0,0.6), 0 2px 8px rgba(0,0,0,0.8);
+  animation: floatUp 0.8s ease-out forwards; }
+@keyframes floatUp { 0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-80px) scale(1.3); } }
+</style>
+</head>
+<body>
+<div id="ui">
+  <span id="score">分数: 0</span>
+  <span id="hp">❤️❤️❤️</span>
+</div>
+<div id="msg"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+
+// --- SCENE SETUP ---
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a2e)
+scene.fog = new THREE.Fog(0x0a0a2e, 30, 60)
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100)
+camera.position.set(0, 14, 18)
+camera.lookAt(0, 0, 0)
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+renderer.shadowMap.enabled = true
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.2
+document.body.prepend(renderer.domElement)
+
+// --- LIGHTS ---
+const ambient = new THREE.AmbientLight(0x404060, 0.5)
+scene.add(ambient)
+
+const dirLight = new THREE.DirectionalLight(0xffeedd, 2.5)
+dirLight.position.set(10, 20, 10)
+dirLight.castShadow = true
+dirLight.shadow.mapSize.width = 1024
+dirLight.shadow.mapSize.height = 1024
+dirLight.shadow.camera.near = 0.5
+dirLight.shadow.camera.far = 50
+dirLight.shadow.camera.left = -20
+dirLight.shadow.camera.right = 20
+dirLight.shadow.camera.top = 20
+dirLight.shadow.camera.bottom = -20
+scene.add(dirLight)
+
+const fillLight = new THREE.DirectionalLight(0x4488ff, 0.6)
+fillLight.position.set(-10, 5, -10)
+scene.add(fillLight)
+
+const rimLight = new THREE.DirectionalLight(0xff66aa, 0.4)
+rimLight.position.set(0, -5, -15)
+scene.add(rimLight)
+
+// --- PLATFORM ---
+const platformSize = 36
+const platformHeight = 0.3
+
+// Platform top surface
+const groundGeo = new THREE.PlaneGeometry(platformSize, platformSize)
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x1a1a4e,
+  roughness: 0.7,
+  metalness: 0.3,
+})
+const ground = new THREE.Mesh(groundGeo, groundMat)
+ground.rotation.x = -Math.PI / 2
+ground.position.y = platformHeight
+ground.receiveShadow = true
+scene.add(ground)
+
+// Platform border/side
+const borderGeo = new THREE.BoxGeometry(platformSize, platformHeight * 2, 0.5)
+const borderMat = new THREE.MeshStandardMaterial({
+  color: 0x4ecca3,
+  emissive: 0x4ecca3,
+  emissiveIntensity: 0.15,
+  roughness: 0.3,
+  metalness: 0.6,
+})
+const sides = [
+  [0, platformHeight, platformSize / 2],
+  [0, platformHeight, -platformSize / 2],
+  [platformSize / 2, platformHeight, 0],
+  [-platformSize / 2, platformHeight, 0],
+]
+const sideGeos = [
+  new THREE.BoxGeometry(platformSize, platformHeight * 2, 0.5),
+  new THREE.BoxGeometry(platformSize, platformHeight * 2, 0.5),
+  new THREE.BoxGeometry(0.5, platformHeight * 2, platformSize),
+  new THREE.BoxGeometry(0.5, platformHeight * 2, platformSize),
+]
+for (let i = 0; i < 4; i++) {
+  const side = new THREE.Mesh(sideGeos[i], borderMat)
+  side.position.set(sides[i][0], sides[i][1], sides[i][2])
+  scene.add(side)
+}
+
+// Platform corner posts
+const cornerMat = new THREE.MeshStandardMaterial({
+  color: 0x4ecca3,
+  emissive: 0x4ecca3,
+  emissiveIntensity: 0.2,
+  roughness: 0.2,
+  metalness: 0.7,
+})
+const pillarGeo = new THREE.CylinderGeometry(0.15, 0.2, 1.2, 8)
+const offsets = [
+  [-platformSize / 2, -platformSize / 2],
+  [platformSize / 2, -platformSize / 2],
+  [platformSize / 2, platformSize / 2],
+  [-platformSize / 2, platformSize / 2],
+]
+for (const [ox, oz] of offsets) {
+  const pillar = new THREE.Mesh(pillarGeo, cornerMat)
+  pillar.position.set(ox, 0.6, oz)
+  scene.add(pillar)
+  // Top cap
+  const capGeo = new THREE.SphereGeometry(0.2, 8, 8)
+  const cap = new THREE.Mesh(capGeo, borderMat)
+  cap.position.set(ox, 1.2, oz)
+  scene.add(cap)
+}
+
+const BOUNDARY = platformSize / 2 - 1
+
+// Boundary glow markers (along edges)
+const markerMat = new THREE.MeshBasicMaterial({
+  color: 0x4ecca3,
+  transparent: true,
+  opacity: 0.08,
+  blending: THREE.AdditiveBlending,
+})
+const markerGeo = new THREE.SphereGeometry(0.15, 8, 8)
+for (let i = 0; i < 16; i++) {
+  const t = (i / 16) * Math.PI * 2
+  const radius = platformSize / 2 - 0.3
+  const marker = new THREE.Mesh(markerGeo, markerMat)
+  marker.position.set(Math.cos(t) * radius, 0.05, Math.sin(t) * radius)
+  scene.add(marker)
+}
+
+// Grid helper on platform
+const grid = new THREE.GridHelper(platformSize - 4, 16, 0x4ecca3, 0x4ecca3)
+grid.position.y = platformHeight + 0.05
+grid.material.opacity = 0.15
+grid.material.transparent = true
+scene.add(grid)
+
+// --- PLAYER (Glowing Sphere) ---
+const playerGroup = new THREE.Group()
+
+// Core sphere body
+const bodyGeo = new THREE.SphereGeometry(0.7, 24, 24)
+const bodyMat = new THREE.MeshStandardMaterial({
+  color: 0x4ecca3,
+  roughness: 0.15,
+  metalness: 0.5,
+  emissive: 0x4ecca3,
+  emissiveIntensity: 0.4,
+})
+const body = new THREE.Mesh(bodyGeo, bodyMat)
+body.castShadow = true
+playerGroup.add(body)
+
+// Inner glow layer
+const glowInnerGeo = new THREE.SphereGeometry(0.85, 16, 16)
+const glowInnerMat = new THREE.MeshBasicMaterial({
+  color: 0x4ecca3,
+  transparent: true,
+  opacity: 0.2,
+  blending: THREE.AdditiveBlending,
+})
+const glowInner = new THREE.Mesh(glowInnerGeo, glowInnerMat)
+playerGroup.add(glowInner)
+
+// Outer glow halo
+const glowOuterGeo = new THREE.SphereGeometry(1.1, 16, 16)
+const glowOuterMat = new THREE.MeshBasicMaterial({
+  color: 0x4ecca3,
+  transparent: true,
+  opacity: 0.08,
+  blending: THREE.AdditiveBlending,
+})
+const glowOuter = new THREE.Mesh(glowOuterGeo, glowOuterMat)
+playerGroup.add(glowOuter)
+
+// Point light following player
+const playerLight = new THREE.PointLight(0x4ecca3, 0.8, 8)
+playerLight.position.y = 1
+playerGroup.add(playerLight)
+
+playerGroup.position.y = 0.7
+scene.add(playerGroup)
+
+const PLAYER_SPEED = 8
+
+// --- COLLECTIBLES ---
+const collectibles = []
+const COLLECTIBLE_COUNT = 12
+
+function spawnCollectible() {
+  const hue = Math.random()
+  const color = new THREE.Color().setHSL(hue, 0.9, 0.6)
+  const brightColor = new THREE.Color().setHSL(hue, 0.9, 0.7)
+
+  // Gem body
+  const geo = new THREE.OctahedronGeometry(0.45, 0)
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.1,
+    metalness: 0.9,
+    emissive: color,
+    emissiveIntensity: 0.3,
+  })
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.castShadow = true
+
+  const angle = Math.random() * Math.PI * 2
+  const dist = 4 + Math.random() * 10
+  mesh.position.set(Math.cos(angle) * dist, 1 + Math.random() * 2, Math.sin(angle) * dist)
+
+  // Glow aura
+  const auraGeo = new THREE.OctahedronGeometry(0.6, 0)
+  const auraMat = new THREE.MeshBasicMaterial({
+    color: brightColor,
+    transparent: true,
+    opacity: 0.12,
+    blending: THREE.AdditiveBlending,
+  })
+  const aura = new THREE.Mesh(auraGeo, auraMat)
+  mesh.add(aura)
+
+  // Horizontal ring
+  const ringGeo = new THREE.TorusGeometry(0.55, 0.025, 8, 20)
+  const ringMat = new THREE.MeshBasicMaterial({ color: brightColor, transparent: true, opacity: 0.5 })
+  const ring = new THREE.Mesh(ringGeo, ringMat)
+  ring.rotation.x = Math.PI / 2
+  mesh.add(ring)
+
+  // Vertical ring
+  const ring2Geo = new THREE.TorusGeometry(0.5, 0.02, 8, 20)
+  const ring2Mat = new THREE.MeshBasicMaterial({ color: brightColor, transparent: true, opacity: 0.3 })
+  const ring2 = new THREE.Mesh(ring2Geo, ring2Mat)
+  ring2.rotation.z = Math.PI / 2
+  mesh.add(ring2)
+
+  // Gem light
+  const gemLight = new THREE.PointLight(color, 0.2, 3)
+  mesh.add(gemLight)
+
+  scene.add(mesh)
+  collectibles.push({ mesh, ring, ring2, collected: false, floatPhase: Math.random() * Math.PI * 2, hue })
+}
+
+for (let i = 0; i < COLLECTIBLE_COUNT; i++) spawnCollectible()
+
+// --- ENEMIES ---
+const enemies = []
+
+function spawnEnemy() {
+  const geo = new THREE.BoxGeometry(0.8, 0.8, 0.8)
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xe94560,
+    roughness: 0.3,
+    metalness: 0.4,
+    emissive: 0xe94560,
+    emissiveIntensity: 0.3,
+  })
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.castShadow = true
+
+  // Enemy glow aura
+  const enemyGlowGeo = new THREE.BoxGeometry(1.0, 1.0, 1.0)
+  const enemyGlowMat = new THREE.MeshBasicMaterial({
+    color: 0xe94560,
+    transparent: true,
+    opacity: 0.1,
+    blending: THREE.AdditiveBlending,
+  })
+  const enemyGlow = new THREE.Mesh(enemyGlowGeo, enemyGlowMat)
+  mesh.add(enemyGlow)
+
+  // Red point light
+  const enemyLight = new THREE.PointLight(0xe94560, 0.3, 4)
+  mesh.add(enemyLight)
+
+  const angle = Math.random() * Math.PI * 2
+  const dist = 6 + Math.random() * 8
+  mesh.position.set(Math.cos(angle) * dist, 0.4, Math.sin(angle) * dist)
+
+  scene.add(mesh)
+  enemies.push({
+    mesh,
+    speed: 1.5 + Math.random() * 0.8,
+    patrolAngle: angle,
+    patrolDist: dist,
+    verticalPhase: Math.random() * Math.PI * 2,
+  })
+}
+
+for (let i = 0; i < 5; i++) spawnEnemy()
+
+// --- PARTICLES ---
+const particleCount = 200
+const particleGeo = new THREE.BufferGeometry()
+const positions = new Float32Array(particleCount * 3)
+const particleColors = new Float32Array(particleCount * 3)
+for (let i = 0; i < particleCount; i++) {
+  positions[i * 3] = (Math.random() - 0.5) * 50
+  positions[i * 3 + 1] = Math.random() * 15
+  positions[i * 3 + 2] = (Math.random() - 0.5) * 50
+  const c = new THREE.Color().setHSL(0.6 + Math.random() * 0.2, 0.5, 0.3 + Math.random() * 0.3)
+  particleColors[i * 3] = c.r
+  particleColors[i * 3 + 1] = c.g
+  particleColors[i * 3 + 2] = c.b
+}
+particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+particleGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3))
+
+const particleMat = new THREE.PointsMaterial({
+  size: 0.08,
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.6,
+  blending: THREE.AdditiveBlending,
+})
+const particles = new THREE.Points(particleGeo, particleMat)
+scene.add(particles)
+
+// --- COLLECT BURST PARTICLES ---
+const burstParticles = []
+const BURST_COUNT = 15
+
+function spawnBurst(position, color) {
+  const geo = new THREE.BufferGeometry()
+  const pos = new Float32Array(BURST_COUNT * 3)
+  const vel = []
+  const col = new Float32Array(BURST_COUNT * 3)
+  for (let i = 0; i < BURST_COUNT; i++) {
+    pos[i * 3] = position.x
+    pos[i * 3 + 1] = position.y
+    pos[i * 3 + 2] = position.z
+    vel.push({
+      x: (Math.random() - 0.5) * 6,
+      y: Math.random() * 4 + 2,
+      z: (Math.random() - 0.5) * 6,
+    })
+    const c = new THREE.Color(color)
+    col[i * 3] = c.r
+    col[i * 3 + 1] = c.g
+    col[i * 3 + 2] = c.b
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
+
+  const mat = new THREE.PointsMaterial({
+    size: 0.25,
+    vertexColors: true,
+    transparent: true,
+    opacity: 1,
+    blending: THREE.AdditiveBlending,
+  })
+  const mesh = new THREE.Points(geo, mat)
+  mesh.position.copy(position)
+  scene.add(mesh)
+  burstParticles.push({ mesh, vel, life: 1.0, geo })
+}
+
+function updateBursts(dt) {
+  for (let i = burstParticles.length - 1; i >= 0; i--) {
+    const b = burstParticles[i]
+    b.life -= dt * 1.5
+    const pos = b.geo.attributes.position.array
+    for (let j = 0; j < BURST_COUNT; j++) {
+      pos[j * 3] += b.vel[j].x * dt
+      pos[j * 3 + 1] += b.vel[j].y * dt
+      pos[j * 3 + 2] += b.vel[j].z * dt
+      b.vel[j].y -= 5 * dt
+    }
+    b.geo.attributes.position.needsUpdate = true
+    b.mesh.material.opacity = Math.max(0, b.life)
+    if (b.life <= 0) {
+      scene.remove(b.mesh)
+      b.mesh.geometry.dispose()
+      b.mesh.material.dispose()
+      burstParticles.splice(i, 1)
+    }
+  }
+}
+
+// --- INPUT ---
+const keys = {}
+let touchX = null, touchY = null
+
+document.addEventListener('keydown', e => { keys[e.key] = true })
+document.addEventListener('keyup', e => { keys[e.key] = false })
+
+renderer.domElement.addEventListener('touchstart', e => {
+  const t = e.touches[0]
+  touchX = t.clientX
+  touchY = t.clientY
+})
+renderer.domElement.addEventListener('touchmove', e => {
+  e.preventDefault()
+  const t = e.touches[0]
+  touchX = t.clientX
+  touchY = t.clientY
+})
+renderer.domElement.addEventListener('touchend', () => { touchX = null; touchY = null })
+
+// --- GAME STATE ---
+let score = 0
+let hp = 3
+const maxHp = 3
+let invincible = 0
+let gameOver = false
+let gameWon = false
+
+const scoreEl = document.getElementById('score')
+const hpEl = document.getElementById('hp')
+const msgEl = document.getElementById('msg')
+
+function updateUI() {
+  scoreEl.textContent = `分数: ${score}`
+  hpEl.textContent = '❤️'.repeat(Math.max(0, hp)) + '🖤'.repeat(Math.max(0, maxHp - hp))
+}
+
+function showMsg(text, sub) {
+  msgEl.style.display = 'block'
+  msgEl.innerHTML = text + (sub ? `<small>${sub}</small>` : '')
+}
+
+function showScorePopup(x, y, text) {
+  const el = document.createElement('div')
+  el.className = 'score-popup'
+  el.textContent = text
+  el.style.left = x + 'px'
+  el.style.top = y + 'px'
+  document.body.appendChild(el)
+  setTimeout(() => el.remove(), 800)
+}
+
+function hideMsg() {
+  msgEl.style.display = 'none'
+}
+
+function restart() {
+  playerGroup.position.set(0, 0.8, 0)
+  body.material.color.setHex(0x4ecca3)
+  body.material.emissive.setHex(0x4ecca3)
+  hp = maxHp
+  score = 0
+  invincible = 0
+  gameOver = false
+  gameWon = false
+  for (const c of collectibles) c.collected = false
+  for (const c of collectibles) {
+    c.mesh.visible = true
+    const angle = Math.random() * Math.PI * 2
+    const dist = 4 + Math.random() * 10
+    c.mesh.position.set(Math.cos(angle) * dist, 1 + Math.random() * 2, Math.sin(angle) * dist)
+  }
+  for (const e of enemies) {
+    const angle = Math.random() * Math.PI * 2
+    const dist = 6 + Math.random() * 8
+    e.patrolAngle = angle
+    e.patrolDist = dist
+    e.mesh.position.set(Math.cos(angle) * dist, 0.4, Math.sin(angle) * dist)
+  }
+  hideMsg()
+  updateUI()
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.key === 'r' || e.key === 'R') && (gameOver || gameWon)) restart()
+})
+renderer.domElement.addEventListener('dblclick', () => {
+  if (gameOver || gameWon) restart()
+})
+
+// --- UPDATE ---
+function update(dt) {
+  if (gameOver || gameWon) return
+
+  // Player movement
+  let dx = 0, dz = 0
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) dx = -1
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) dx = 1
+  if (keys['ArrowUp'] || keys['w'] || keys['W']) dz = -1
+  if (keys['ArrowDown'] || keys['s'] || keys['S']) dz = 1
+
+  // Touch input
+  if (touchX !== null && touchY !== null) {
+    const cx = window.innerWidth / 2
+    const cy = window.innerHeight / 2
+    dx = (touchX - cx) / cx
+    dz = (touchY - cy) / cy
+    if (Math.abs(dx) < 0.15) dx = 0
+    if (Math.abs(dz) < 0.15) dz = 0
+  }
+
+  if (dx !== 0 && dz !== 0) { dx *= 0.707; dz *= 0.707 }
+  playerGroup.position.x += dx * PLAYER_SPEED * dt
+  playerGroup.position.z += dz * PLAYER_SPEED * dt
+  playerGroup.position.x = Math.max(-BOUNDARY, Math.min(BOUNDARY, playerGroup.position.x))
+  playerGroup.position.z = Math.max(-BOUNDARY, Math.min(BOUNDARY, playerGroup.position.z))
+
+  // Player rotation
+  if (dx !== 0 || dz !== 0) {
+    playerGroup.rotation.y = Math.atan2(dx, dz)
+  }
+
+  // Player bob
+  const bobSpeed = 5
+  const bobAmount = 0.08
+  body.position.y = Math.sin(Date.now() / 1000 * bobSpeed) * bobAmount
+  glowInner.scale.setScalar(1 + Math.sin(Date.now() / 1000 * bobSpeed) * 0.05)
+  glowOuter.scale.setScalar(1 + Math.sin(Date.now() / 1000 * bobSpeed * 0.7) * 0.08)
+
+  // Invincibility
+  if (invincible > 0) invincible--
+  body.material.emissiveIntensity = invincible > 0 ? 0.5 : 0.1
+
+  // Collectibles
+  for (const c of collectibles) {
+    if (c.collected) continue
+    c.mesh.rotation.x += dt * 1.5
+    c.mesh.rotation.y += dt * 2
+    c.floatPhase += dt * 1.5
+    c.mesh.position.y += Math.sin(c.floatPhase) * dt * 0.3
+    if (c.ring) c.ring.rotation.z += dt * 1.5
+    if (c.ring2) c.ring2.rotation.x += dt * 2
+
+    const dist = playerGroup.position.distanceTo(c.mesh.position)
+    if (dist < 1.5) {
+      c.collected = true
+      c.mesh.visible = false
+      spawnBurst(c.mesh.position.clone(), c.mesh.material.color)
+      // Show score popup
+      const vec = c.mesh.position.clone().project(camera)
+      const px = (vec.x * 0.5 + 0.5) * window.innerWidth
+      const py = (-vec.y * 0.5 + 0.5) * window.innerHeight
+      showScorePopup(px, py, '+100')
+      score += 100
+      updateUI()
+      // Spawn new collectible
+      setTimeout(() => {
+        if (gameOver || gameWon) return
+        c.collected = false
+        c.mesh.visible = true
+        const angle = Math.random() * Math.PI * 2
+        const dist2 = 4 + Math.random() * 10
+        c.mesh.position.set(Math.cos(angle) * dist2, 1 + Math.random() * 2, Math.sin(angle) * dist2)
+      }, 1000)
+    }
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    e.patrolAngle += dt * e.speed * 0.3
+    e.mesh.position.x = Math.cos(e.patrolAngle) * e.patrolDist
+    e.mesh.position.z = Math.sin(e.patrolAngle) * e.patrolDist
+    e.verticalPhase += dt * 2
+    e.mesh.position.y = 0.4 + Math.sin(e.verticalPhase) * 0.3
+    e.mesh.rotation.x += dt * 1.5
+    e.mesh.rotation.y += dt * 2
+
+    // Player collision
+    if (invincible === 0) {
+      const dist = playerGroup.position.distanceTo(e.mesh.position)
+      if (dist < 1.4) {
+        hp--
+        invincible = 90
+        // Hit flash - red tint
+        body.material.color.setHex(0xff3333)
+        body.material.emissive.setHex(0xff3333)
+        spawnBurst(playerGroup.position.clone(), 0xe94560)
+        setTimeout(() => {
+          body.material.color.setHex(0x4ecca3)
+          body.material.emissive.setHex(0x4ecca3)
+        }, 150)
+        updateUI()
+        if (hp <= 0) {
+          gameOver = true
+          showMsg('游戏结束', `分数: ${score}  按 R 重新开始`)
+        }
+      }
+    }
+  }
+
+  // Particles drift
+  const pos = particles.geometry.attributes.position.array
+  for (let i = 0; i < particleCount; i++) {
+    pos[i * 3 + 1] += Math.sin(Date.now() / 1000 + i) * dt * 0.02
+    if (pos[i * 3 + 1] > 15) pos[i * 3 + 1] = 0
+  }
+  particles.geometry.attributes.position.needsUpdate = true
+
+  // Update burst particles
+  updateBursts(dt)
+
+  // Camera follow
+  camera.position.x += (playerGroup.position.x - camera.position.x) * dt * 2
+  camera.position.z += (playerGroup.position.z + 18 - camera.position.z) * dt * 2
+  camera.lookAt(playerGroup.position.x, 0, playerGroup.position.z)
+}
+
+// --- GAME LOOP ---
+let lastTime = 0
+
+function animate(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05)
+  lastTime = time
+  update(dt)
+  renderer.render(scene, camera)
+  requestAnimationFrame(animate)
+}
+
+animate(0)
+
+// --- RESIZE ---
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(window.innerWidth, window.innerHeight)
+})
+
+// --- WIN CONDITION: reach 2000 points ---
+const winCheck = setInterval(() => {
+  if (score >= 2000 && !gameOver && !gameWon) {
+    gameWon = true
+    showMsg('恭喜过关！', `分数: ${score}  按 R 重新开始`)
+  }
+}, 500)
+
+updateUI()
+</script>
+</body>
+</html>

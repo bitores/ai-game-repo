@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>彩色推箱 - Color Push</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;touch-action:none;}
+#app{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;}
+
+/* ===== START SCREEN ===== */
+#startScreen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);z-index:100;gap:20px;padding:20px;}
+#startScreen h1{font-size:clamp(32px,7vw,56px);color:#fff;text-shadow:0 0 30px rgba(100,100,255,.5);letter-spacing:4px;}
+#startScreen .subtitle{color:#aaa;font-size:clamp(14px,3vw,20px);margin-top:-10px;opacity:.8;}
+#startScreen .start-btn{background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;font-size:clamp(18px,4vw,28px);padding:16px 60px;border-radius:16px;cursor:pointer;box-shadow:0 8px 32px rgba(102,126,234,.4);transition:transform .2s,box-shadow .2s;letter-spacing:2px;}
+#startScreen .start-btn:active{transform:scale(.95);box-shadow:0 4px 16px rgba(102,126,234,.3);}
+#startScreen .controls-info{color:#888;font-size:clamp(11px,2vw,14px);text-align:center;margin-top:10px;line-height:1.8;}
+
+/* ===== GAME UI ===== */
+#gameUI{display:none;flex-direction:column;align-items:center;width:100%;height:100%;max-width:600px;padding:8px;}
+#topBar{width:100%;display:flex;justify-content:space-between;align-items:center;padding:8px 4px;color:#fff;font-size:clamp(14px,3vw,18px);flex-shrink:0;}
+#topBar .level-name{font-weight:600;color:#e0e0ff;}
+#topBar .moves{color:#aaa;}
+#topBar .moves span{color:#667eea;font-weight:700;}
+
+#canvasWrap{flex:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:0;position:relative;}
+#gameCanvas{display:block;border-radius:12px;}
+
+/* ===== CONTROLS ===== */
+#controls{display:none;flex-shrink:0;padding:8px 0 12px;gap:4px;width:100%;max-width:320px;}
+
+#controls .dpad{display:grid;grid-template-columns:72px 72px 72px;grid-template-rows:72px 72px 72px;gap:4px;justify-content:center;margin:0 auto;}
+#controls .dpad-btn{background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.12);border-radius:14px;color:#fff;font-size:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s;touch-action:none;}
+#controls .dpad-btn:active{background:rgba(102,126,234,.4);}
+#controls .dpad-empty{visibility:hidden;}
+.dpad-up{grid-column:2;grid-row:1;}
+.dpad-left{grid-column:1;grid-row:2;}
+.dpad-right{grid-column:3;grid-row:2;}
+.dpad-down{grid-column:2;grid-row:3;}
+
+#bottomBar{width:100%;display:flex;justify-content:center;gap:16px;padding:4px 0 8px;flex-shrink:0;}
+#bottomBar button{background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.12);border-radius:12px;color:#ccc;font-size:clamp(12px,2.5vw,16px);padding:10px 20px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px;}
+#bottomBar button:active{background:rgba(102,126,234,.3);transform:scale(.95);}
+#bottomBar button svg{width:18px;height:18px;fill:currentColor;}
+
+/* ===== LEVEL COMPLETE ===== */
+#levelComplete{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);z-index:50;gap:16px;padding:20px;}
+#levelComplete .title{font-size:clamp(28px,6vw,44px);font-weight:700;background:linear-gradient(135deg,#f7971e,#ffd200);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+#levelComplete .stats{color:#ccc;font-size:clamp(16px,3vw,22px);}
+#levelComplete .stats span{color:#fff;font-weight:700;}
+#levelComplete .btn-group{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:8px;}
+#levelComplete button{background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;font-size:clamp(15px,3vw,20px);padding:14px 36px;border-radius:14px;cursor:pointer;box-shadow:0 6px 24px rgba(102,126,234,.35);transition:transform .2s;}
+#levelComplete button:active{transform:scale(.95);}
+#levelComplete .btn-secondary{background:rgba(255,255,255,.1);box-shadow:none;}
+
+/* ===== TOAST ===== */
+#toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:60;transition:opacity .3s;opacity:0;}
+#toast.show{opacity:1;}
+#toast .text{color:#fff;font-size:clamp(24px,5vw,36px);font-weight:700;text-shadow:0 4px 20px rgba(0,0,0,.5);text-align:center;}
+
+@media(pointer:coarse){#controls{display:block;}}
+@media(pointer:fine),(pointer:none){#controls{display:none;}}
+@media(max-height:500px){#topBar{padding:2px 4px;font-size:12px;}#bottomBar{padding:2px 0 4px;}#bottomBar button{padding:6px 12px;font-size:12px;}}
+@media(min-width:768px){#controls{display:none!important;}}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- START SCREEN -->
+<div id="startScreen">
+  <h1>彩色推箱</h1>
+  <div class="subtitle">Color Push · 推箱子 × 消除</div>
+  <button class="start-btn" id="btnStart">开始游戏</button>
+  <div class="controls-info">
+    ⌨ 方向键移动 &nbsp;|&nbsp; Z 撤销 &nbsp;|&nbsp; R 重开<br>
+    📱 滑动屏幕 / 方向键
+  </div>
+</div>
+
+<!-- GAME UI -->
+<div id="gameUI">
+  <div id="topBar">
+    <div class="level-name" id="levelName">第 1 关</div>
+    <div class="moves">步数: <span id="moveCount">0</span></div>
+  </div>
+  <div id="canvasWrap">
+    <canvas id="gameCanvas"></canvas>
+    <div id="levelComplete">
+      <div class="title">🎉 通关！</div>
+      <div class="stats" id="completeStats">用时 <span id="completeMoves">0</span> 步</div>
+      <div class="btn-group">
+        <button id="btnNext">下一关</button>
+        <button class="btn-secondary" id="btnRetryComplete">重试</button>
+      </div>
+    </div>
+    <div id="toast"><div class="text" id="toastText"></div></div>
+  </div>
+  <div id="controls">
+    <div class="dpad">
+      <div class="dpad-btn dpad-up" data-dir="up">▲</div>
+      <div class="dpad-btn dpad-left" data-dir="left">◀</div>
+      <div class="dpad-empty"></div>
+      <div class="dpad-btn dpad-right" data-dir="right">▶</div>
+      <div class="dpad-empty"></div>
+      <div class="dpad-btn dpad-down" data-dir="down">▼</div>
+    </div>
+  </div>
+  <div id="bottomBar">
+    <button id="btnUndo"><svg viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>撤销</button>
+    <button id="btnRestart"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>重开</button>
+    <button id="btnMenu"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>选关</button>
+  </div>
+</div>
+
+</div>
+
+<script>
+// ========================================================================
+//  COLOR PUSH — 彩色推箱: Sokoban × Match Elimination Puzzle
+// ========================================================================
+
+// ===== COLORS =====
+const COLORS = ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6'];
+const COLOR_NAMES = ['red','blue','green','yellow','purple'];
+const COLOR_HEX = {red:'#e74c3c',blue:'#3498db',green:'#2ecc71',yellow:'#f1c40f',purple:'#9b59b6'};
+const COLOR_LIGHT = {red:'#ff6b6b',blue:'#74b9ff',green:'#55efc4',yellow:'#ffeaa7',purple:'#a29bfe'};
+const COLOR_DARK = {red:'#c0392b',blue:'#2980b9',green:'#27ae60',yellow:'#f39c12',purple:'#8e44ad'};
+
+// Block chars → color
+const BLOCK_MAP = {R:'red',B:'blue',G:'green',Y:'yellow',P:'purple'};
+// Target chars → color
+const TARGET_MAP = {r:'red',b:'blue',g:'green',y:'yellow',p:'purple'};
+
+// ===== LEVEL DEFINITIONS =====
+// # = wall, . = empty, @ = player
+// Block letters: R=red,B=blue,G=green,Y=yellow,P=purple
+// Target letters: r=red,b=blue,g=green,y=yellow,p=purple
+const LEVELS_RAW = [
+  // ── Level 1 ──
+  [
+    "#########",
+    "#.......#",
+    "#..@....#",
+    "#...B...#",
+    "#...b...#",
+    "#.......#",
+    "#########",
+  ],
+  // ── Level 2 ──
+  [
+    "#########",
+    "#.......#",
+    "#..@....#",
+    "#.......#",
+    "#..R.G..#",
+    "#..r.g..#",
+    "#.......#",
+    "#########",
+  ],
+  // ── Level 3 ──
+  [
+    "###########",
+    "#.........#",
+    "#..@......#",
+    "#.........#",
+    "#....B....#",
+    "#....b....#",
+    "#....G....#",
+    "#....g....#",
+    "#.........#",
+    "###########",
+  ],
+  // ── Level 4 ──
+  [
+    "#########",
+    "#.......#",
+    "#.@.....#",
+    "#.......#",
+    "#.B.R...#",
+    "#.b.r...#",
+    "#.......#",
+    "#########",
+  ],
+  // ── Level 5 ──
+  [
+    "###########",
+    "#.........#",
+    "#..@......#",
+    "#....#....#",
+    "#....B....#",
+    "#....b....#",
+    "#....#....#",
+    "#..G......#",
+    "#..g......#",
+    "#.........#",
+    "###########",
+  ],
+  // ── Level 6 ──
+  [
+    "###########",
+    "#.........#",
+    "#.@...#...#",
+    "#.........#",
+    "#..B..R...#",
+    "#..b..r...#",
+    "#.........#",
+    "#....#....#",
+    "#...G..Y..#",
+    "#...g..y..#",
+    "#.........#",
+    "###########",
+  ],
+  // ── Level 7 ──
+  [
+    "###########",
+    "#.........#",
+    "#.@....#..#",
+    "#.........#",
+    "#..B......#",
+    "#..b..R...#",
+    "#.....#.r.#",
+    "#.........#",
+    "#....G....#",
+    "#....g....#",
+    "#.........#",
+    "###########",
+  ],
+  // ── Level 8 ──
+  [
+    "###########",
+    "#.........#",
+    "#..@......#",
+    "#..###....#",
+    "#....B....#",
+    "#....b....#",
+    "#....#....#",
+    "#..R.#.G..#",
+    "#..r..#.g.#",
+    "#.........#",
+    "###########",
+  ],
+  // ── Level 9 ──
+  [
+    "###########",
+    "#.........#",
+    "#.@..#....#",
+    "#.........#",
+    "#..B......#",
+    "#..b..R...#",
+    "#.....#.r.#",
+    "#.........#",
+    "#....G..Y.#",
+    "#....g..y.#",
+    "#.........#",
+    "###########",
+  ],
+  // ── Level 10 ──
+  [
+    "############",
+    "#..........#",
+    "#..@.......#",
+    "#..........#",
+    "#....B.....#",
+    "#....b.....#",
+    "#....#.....#",
+    "#...R.G....#",
+    "#...r.g....#",
+    "#..........#",
+    "#...Y..P...#",
+    "#...y..p...#",
+    "#..........#",
+    "############",
+  ],
+  // ── Level 11 ──
+  [
+    "############",
+    "#..........#",
+    "#..@....#..#",
+    "#..........#",
+    "#..#.......#",
+    "#..B..R....#",
+    "#..b..#.r..#",
+    "#..........#",
+    "#....G..Y..#",
+    "#....g..y..#",
+    "#..........#",
+    "#....P.....#",
+    "#....p.....#",
+    "#..........#",
+    "############",
+  ],
+  // ── Level 12 ──
+  [
+    "############",
+    "#..........#",
+    "#.@........#",
+    "#..###.....#",
+    "#......#...#",
+    "#..B.......#",
+    "#..b..R....#",
+    "#.....#.r..#",
+    "#..........#",
+    "#...G..Y...#",
+    "#...g..y...#",
+    "#..........#",
+    "#....P...#.#",
+    "#....p.....#",
+    "#..........#",
+    "############",
+  ],
+  // ── Level 13 ──
+  [
+    "##############",
+    "#............#",
+    "#..@.........#",
+    "#............#",
+    "#....B.......#",
+    "#....b..R....#",
+    "#.......#.r..#",
+    "#............#",
+    "#...G........#",
+    "#...g..Y.....#",
+    "#.......#.y..#",
+    "#............#",
+    "#....P.......#",
+    "#....p.......#",
+    "#............#",
+    "##############",
+  ],
+  // ── Level 14 ──
+  [
+    "##############",
+    "#............#",
+    "#..@....#....#",
+    "#............#",
+    "#..###....#..#",
+    "#....B.......#",
+    "#....b..R....#",
+    "#.......#.r..#",
+    "#............#",
+    "#...G..Y.....#",
+    "#...g....y...#",
+    "#.....#......#",
+    "#....P.......#",
+    "#....p.......#",
+    "#............#",
+    "##############",
+  ],
+  // ── Level 15 ──
+  [
+    "##############",
+    "#............#",
+    "#.@..........#",
+    "#.....#......#",
+    "#..###....#..#",
+    "#....B..#....#",
+    "#....b......-#",
+    "#..R..#......#",
+    "#..r..#.G....#",
+    "#........g...#",
+    "#......Y.....#",
+    "#......y..#..#",
+    "#....P.......#",
+    "#....p.......#",
+    "#............#",
+    "##############",
+  ],
+  // ── Level 16 ──
+  [
+    "############",
+    "#..........#",
+    "#.@..#.....#",
+    "#..........#",
+    "#..#..#....#",
+    "#..B..R....#",
+    "#..b..#.r..#",
+    "#..........#",
+    "#....G..Y..#",
+    "#....g..#y.#",
+    "#..........#",
+    "#....P.....#",
+    "#....p..#..#",
+    "#..........#",
+    "############",
+  ],
+  // ── Level 17 ──
+  [
+    "##############",
+    "#............#",
+    "#..@.........#",
+    "#.....#......#",
+    "#..###....#..#",
+    "#....B.......#",
+    "#....b..#.R..#",
+    "#........#.r.#",
+    "#.....#......#",
+    "#...G........#",
+    "#...g..#.Y...#",
+    "#........#.y.#",
+    "#.....#......#",
+    "#......P.....#",
+    "#......p.....#",
+    "#............#",
+    "##############",
+  ],
+  // ── Level 18 ──
+  [
+    "################",
+    "#..............#",
+    "#..@...........#",
+    "#..............#",
+    "#..###.........#",
+    "#....B.........#",
+    "#....b..R......#",
+    "#.......#..r...#",
+    "#..............#",
+    "#...G..........#",
+    "#...g..#.Y.....#",
+    "#........#.y...#",
+    "#..............#",
+    "#......P.......#",
+    "#......p.......#",
+    "#..............#",
+    "################",
+  ],
+  // ── Level 19 ──
+  [
+    "################",
+    "#..............#",
+    "#..@..........#",
+    "#..............#",
+    "#..###....#....#",
+    "#....B..#......#",
+    "#....b........-#",
+    "#..R..#..G.....#",
+    "#..r......#.g..#",
+    "#..............#",
+    "#....Y.........#",
+    "#....y..#..P...#",
+    "#...........#p.#",
+    "#..............#",
+    "#..............#",
+    "################",
+  ],
+  // ── Level 20 ──
+  [
+    "################",
+    "#..............#",
+    "#..@...........#",
+    "#.....#........#",
+    "#..###....#....#",
+    "#....B..#......#",
+    "#....b.........#",
+    "#..R..#..G.....#",
+    "#..r......#.g..#",
+    "#..............#",
+    "#....Y..#......#",
+    "#....y..##..P..#",
+    "#...........#p.#",
+    "#..............#",
+    "#..............#",
+    "################",
+  ],
+];
+
+// ===== VALIDATE & FIX LEVELS =====
+// Level 15 and 19 have '-' characters that should be empty floor
+for (let li = 0; li < LEVELS_RAW.length; li++) {
+  for (let ri = 0; ri < LEVELS_RAW[li].length; ri++) {
+    LEVELS_RAW[li][ri] = LEVELS_RAW[li][ri].replace(/-/g, '.');
+  }
+}
+
+// ========================================================================
+//  GAME ENGINE
+// ========================================================================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const elLevelName = document.getElementById('levelName');
+const elMoveCount = document.getElementById('moveCount');
+const elCompleteMoves = document.getElementById('completeMoves');
+const elToast = document.getElementById('toast');
+const elToastText = document.getElementById('toastText');
+
+// State
+let game = {
+  level: 0,
+  maxLevel: 0,          // highest unlocked level
+  grid: [],              // 2D array: 0=empty, 1=wall, or {color}/false for target
+  player: { r:0, c:0, pr:0, pc:0 },  // pr/pc for animation
+  blocks: [],            // [{ r, c, color, pr, pc, alive }]
+  targets: [],           // [{ r, c, color, alive }]
+  moves: 0,
+  history: [],           // for undo: [{ player, blocks, targets, moves }]
+  completed: false,
+  animating: false,
+  particles: [],
+  shakeTime: 0,
+  blockCount: 0,
+};
+
+let tileSize = 48;
+let gridRows = 0;
+let gridCols = 0;
+let canvasW = 0;
+let canvasH = 0;
+let toastTimeout = null;
+let menuOpen = false;
+let startScreen = true;
+
+// ===== LEVEL LOADING =====
+function parseLevel(levelIndex) {
+  const raw = LEVELS_RAW[levelIndex];
+  const rows = raw.length;
+  const cols = raw[0].length;
+
+  const grid = [];
+  const blocks = [];
+  const targets = [];
+  let player = { r:0, c:0 };
+
+  for (let r = 0; r < rows; r++) {
+    grid[r] = [];
+    for (let c = 0; c < cols; c++) {
+      const ch = raw[r][c];
+      if (ch === '#') {
+        grid[r][c] = 1; // wall
+      } else if (ch === '@') {
+        grid[r][c] = 0; // empty
+        player = { r, c };
+      } else if (ch in BLOCK_MAP) {
+        grid[r][c] = 0; // empty underneath block
+        blocks.push({ r, c, color: BLOCK_MAP[ch], pr: r, pc: c, alive: true });
+      } else if (ch in TARGET_MAP) {
+        grid[r][c] = 0; // empty underneath target
+        targets.push({ r, c, color: TARGET_MAP[ch], alive: true });
+      } else {
+        grid[r][c] = 0; // empty
+      }
+    }
+  }
+
+  return { grid, player, blocks, targets, rows, cols };
+}
+
+function loadLevel(levelIndex) {
+  const data = parseLevel(levelIndex);
+  game.level = levelIndex;
+  game.grid = data.grid;
+  game.player = { r: data.player.r, c: data.player.c, pr: data.player.r, pc: data.player.c };
+  game.blocks = data.blocks;
+  game.targets = data.targets;
+  game.moves = 0;
+  game.history = [];
+  game.completed = false;
+  game.animating = false;
+  game.particles = [];
+  game.shakeTime = 0;
+  game.blockCount = data.blocks.length;
+  gridRows = data.rows;
+  gridCols = data.cols;
+
+  elMoveCount.textContent = '0';
+  elLevelName.textContent = `第 ${levelIndex + 1} 关`;
+  document.getElementById('levelComplete').style.display = 'none';
+
+  resizeCanvas();
+  render();
+}
+
+// ===== CANVAS SIZING =====
+function resizeCanvas() {
+  const wrap = document.getElementById('canvasWrap');
+  const rect = wrap.getBoundingClientRect();
+  const pad = 8;
+  const availW = rect.width - pad * 2;
+  const availH = rect.height - pad * 2;
+
+  // Calculate tile size to fit grid
+  let ts = Math.floor(Math.min(availW / gridCols, availH / gridRows));
+  ts = Math.max(ts, 16);
+  ts = Math.min(ts, 64);
+
+  tileSize = ts;
+  canvasW = ts * gridCols;
+  canvasH = ts * gridRows;
+
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  canvas.style.width = canvasW + 'px';
+  canvas.style.height = canvasH + 'px';
+}
+
+// ===== SNAPSHOT FOR UNDO =====
+function saveSnapshot() {
+  game.history.push({
+    player: { ...game.player, pr: game.player.pr, pc: game.player.pc },
+    blocks: game.blocks.map(b => ({ ...b })),
+    targets: game.targets.map(t => ({ ...t })),
+    moves: game.moves,
+  });
+  // Keep last 30
+  if (game.history.length > 30) game.history.shift();
+}
+
+function undo() {
+  if (game.history.length === 0 || game.animating || game.completed) return;
+  const snap = game.history.pop();
+  game.player = snap.player;
+  game.blocks = snap.blocks;
+  game.targets = snap.targets;
+  game.moves = snap.moves;
+  elMoveCount.textContent = game.moves;
+  // Count alive blocks
+  game.blockCount = game.blocks.filter(b => b.alive).length;
+  game.completed = false;
+  document.getElementById('levelComplete').style.display = 'none';
+  render();
+}
+
+// ===== MOVEMENT =====
+function tryMove(dr, dc) {
+  if (game.animating || game.completed) return;
+
+  const { r, c } = game.player;
+  const nr = r + dr;
+  const nc = c + dc;
+
+  // Bounds check
+  if (nr < 0 || nr >= gridRows || nc < 0 || nc >= gridCols) return;
+
+  // Wall check
+  if (game.grid[nr][nc] === 1) return;
+
+  // Check if there's a block at target
+  const block = game.blocks.find(b => b.alive && b.r === nr && b.c === nc);
+
+  if (block) {
+    // Try to push block
+    const br = nr + dr;
+    const bc = nc + dc;
+
+    // Can't push out of bounds or into wall
+    if (br < 0 || br >= gridRows || bc < 0 || bc >= gridCols) return;
+    if (game.grid[br][bc] === 1) return;
+
+    // Can't push into another alive block
+    if (game.blocks.some(b => b.alive && b.r === br && b.c === bc)) return;
+
+    // Check if pushing onto a target
+    const target = game.targets.find(t => t.alive && t.r === br && t.c === bc);
+
+    saveSnapshot();
+
+    // Move block
+    block.pr = block.r;
+    block.pc = block.c;
+    block.r = br;
+    block.c = bc;
+
+    // Move player
+    game.player.pr = game.player.r;
+    game.player.pc = game.player.c;
+    game.player.r = nr;
+    game.player.c = nc;
+
+    game.moves++;
+    elMoveCount.textContent = game.moves;
+
+    // Check elimination
+    if (target && target.color === block.color) {
+      eliminate(block, target);
+    } else {
+      render();
+    }
+  } else {
+    // Check if target tile (non-block) at destination
+    const target = game.targets.find(t => t.alive && t.r === nr && t.c === nc);
+    if (target) {
+      // Player can walk on target tiles freely
+    }
+
+    saveSnapshot();
+
+    // Move player
+    game.player.pr = game.player.r;
+    game.player.pc = game.player.c;
+    game.player.r = nr;
+    game.player.c = nc;
+
+    game.moves++;
+    elMoveCount.textContent = game.moves;
+    render();
+  }
+}
+
+// ===== ELIMINATION =====
+function eliminate(block, target) {
+  game.animating = true;
+
+  // Mark dead
+  block.alive = false;
+  target.alive = false;
+  game.blockCount--;
+
+  // Create particles
+  const color = COLOR_HEX[block.color];
+  const cx = (block.c + 0.5) * tileSize;
+  const cy = (block.r + 0.5) * tileSize;
+  for (let i = 0; i < 30; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 4;
+    game.particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      life: 1,
+      decay: 0.015 + Math.random() * 0.02,
+      size: 4 + Math.random() * 6,
+      color: COLOR_LIGHT[block.color],
+      color2: color,
+    });
+  }
+
+  game.shakeTime = 10;
+
+  // Show toast
+  showToast('消除!');
+
+  // Animate particles then render
+  let frames = 0;
+  function animLoop() {
+    frames++;
+    // Update particles
+    for (const p of game.particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.1; // gravity
+      p.life -= p.decay;
+    }
+    game.particles = game.particles.filter(p => p.life > 0);
+    if (game.shakeTime > 0) game.shakeTime--;
+
+    render();
+
+    if (game.particles.length > 0 || game.shakeTime > 0) {
+      requestAnimationFrame(animLoop);
+    } else {
+      game.animating = false;
+      // Check win
+      if (game.blockCount === 0) {
+        levelComplete();
+      } else {
+        render();
+      }
+    }
+  }
+
+  animLoop();
+}
+
+// ===== LEVEL COMPLETE =====
+function levelComplete() {
+  game.completed = true;
+  elCompleteMoves.textContent = game.moves;
+  document.getElementById('levelComplete').style.display = 'flex';
+
+  // Unlock next level
+  if (game.level + 1 > game.maxLevel) {
+    game.maxLevel = game.level + 1;
+    saveProgress();
+  }
+
+  // Win particles burst
+  for (let i = 0; i < 60; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 3 + Math.random() * 6;
+    const colors = Object.values(COLOR_LIGHT);
+    game.particles.push({
+      x: canvasW / 2,
+      y: canvasH / 2,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      life: 1,
+      decay: 0.008 + Math.random() * 0.015,
+      size: 5 + Math.random() * 8,
+      color: colors[Math.floor(Math.random() * colors.length)],
+    });
+  }
+
+  function winAnim() {
+    for (const p of game.particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.05;
+      p.life -= p.decay;
+    }
+    game.particles = game.particles.filter(p => p.life > 0);
+    render();
+    if (game.particles.length > 0) {
+      requestAnimationFrame(winAnim);
+    }
+  }
+  winAnim();
+}
+
+// ===== TOAST =====
+function showToast(text, duration) {
+  duration = duration || 600;
+  elToastText.textContent = text;
+  elToast.classList.add('show');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => {
+    elToast.classList.remove('show');
+  }, duration);
+}
+
+// ===== PROGRESS SAVING =====
+function saveProgress() {
+  try {
+    localStorage.setItem('colorpush_level', game.maxLevel.toString());
+  } catch(e) {}
+}
+
+function loadProgress() {
+  try {
+    const v = localStorage.getItem('colorpush_level');
+    if (v) game.maxLevel = parseInt(v);
+  } catch(e) {}
+}
+
+// ========================================================================
+//  RENDERING
+// ========================================================================
+
+function render() {
+  ctx.clearRect(0, 0, canvasW, canvasH);
+
+  const ts = tileSize;
+
+  // Apply screen shake
+  let shakeX = 0, shakeY = 0;
+  if (game.shakeTime > 0) {
+    shakeX = (Math.random() - 0.5) * 4;
+    shakeY = (Math.random() - 0.5) * 4;
+  }
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // ── Draw floor tiles ──
+  for (let r = 0; r < gridRows; r++) {
+    for (let c = 0; c < gridCols; c++) {
+      const x = c * ts;
+      const y = r * ts;
+
+      if (game.grid[r][c] === 1) {
+        // Wall
+        const grad = ctx.createLinearGradient(x, y, x + ts, y + ts);
+        grad.addColorStop(0, '#4a4a6a');
+        grad.addColorStop(1, '#2a2a4a');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, y, ts, ts);
+        // Wall inner shadow
+        ctx.fillStyle = 'rgba(0,0,0,.3)';
+        ctx.fillRect(x + 2, y + 2, ts - 4, ts - 4);
+        ctx.fillStyle = '#3a3a5a';
+        ctx.fillRect(x + 3, y + 3, ts - 6, ts - 6);
+        // Brick pattern
+        ctx.strokeStyle = 'rgba(0,0,0,.15)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 4, y + 4, ts/2 - 4, ts/2 - 4);
+        ctx.strokeRect(x + ts/2, y + 4, ts/2 - 4, ts/2 - 4);
+        ctx.strokeRect(x + ts/4, y + ts/2, ts/2, ts/2 - 4);
+      } else {
+        // Floor
+        const isDark = (r + c) % 2 === 0;
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.03)';
+        ctx.fillRect(x, y, ts, ts);
+      }
+    }
+  }
+
+  // ── Draw targets ──
+  for (const t of game.targets) {
+    if (!t.alive) continue;
+    const x = t.c * ts;
+    const y = t.r * ts;
+    const color = COLOR_HEX[t.color];
+    const light = COLOR_LIGHT[t.color];
+    const pad = ts * 0.15;
+    const radius = (ts - pad * 2) / 2;
+
+    // Glow
+    const glow = ctx.createRadialGradient(x + ts/2, y + ts/2, 0, x + ts/2, y + ts/2, radius + 4);
+    glow.addColorStop(0, light + '40');
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.fillRect(x - 4, y - 4, ts + 8, ts + 8);
+
+    // Ring
+    ctx.beginPath();
+    ctx.arc(x + ts/2, y + ts/2, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Inner shimmer
+    ctx.beginPath();
+    ctx.arc(x + ts/2, y + ts/2, radius * 0.6, 0, Math.PI * 2);
+    ctx.fillStyle = color + '25';
+    ctx.fill();
+
+    // Color dot in center
+    ctx.beginPath();
+    ctx.arc(x + ts/2, y + ts/2, radius * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = color + '60';
+    ctx.fill();
+  }
+
+  // ── Draw blocks ──
+  for (const b of game.blocks) {
+    if (!b.alive) continue;
+    const x = b.c * ts;
+    const y = b.r * ts;
+    const color = COLOR_HEX[b.color];
+    const light = COLOR_LIGHT[b.color];
+    const dark = COLOR_DARK[b.color];
+    const pad = ts * 0.12;
+    const radius = 6;
+    const bw = ts - pad * 2;
+    const bh = ts - pad * 2;
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,.25)';
+    roundRect(ctx, x + pad + 2, y + pad + 2, bw, bh, radius, true, false);
+
+    // Block body
+    const grad = ctx.createLinearGradient(x + pad, y + pad, x + pad, y + pad + bh);
+    grad.addColorStop(0, light);
+    grad.addColorStop(0.5, color);
+    grad.addColorStop(1, dark);
+    ctx.fillStyle = grad;
+    roundRect(ctx, x + pad, y + pad, bw, bh, radius, true, false);
+
+    // Top highlight
+    const hGrad = ctx.createLinearGradient(x + pad, y + pad, x + pad, y + pad + bh * 0.4);
+    hGrad.addColorStop(0, 'rgba(255,255,255,.35)');
+    hGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hGrad;
+    roundRect(ctx, x + pad, y + pad, bw, bh * 0.4, radius, true, false);
+
+    // Border
+    ctx.strokeStyle = 'rgba(255,255,255,.15)';
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, x + pad, y + pad, bw, bh, radius, false, true);
+  }
+
+  // ── Draw player ──
+  {
+    const x = game.player.c * ts;
+    const y = game.player.r * ts;
+    const pad = ts * 0.15;
+    const size = ts - pad * 2;
+    const cx = x + ts / 2;
+    const cy = y + ts / 2;
+
+    // Shadow
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + size/2 + 3, size/2.2, size/6, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,.2)';
+    ctx.fill();
+
+    // Body circle
+    const grad = ctx.createRadialGradient(cx - size/5, cy - size/5, 0, cx, cy, size/2);
+    grad.addColorStop(0, '#74b9ff');
+    grad.addColorStop(0.7, '#5a9ee6');
+    grad.addColorStop(1, '#3d7bd4');
+    ctx.beginPath();
+    ctx.arc(cx, cy, size/2, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Eyes
+    const eyeOff = size * 0.18;
+    const eyeSize = size * 0.12;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.ellipse(cx - eyeOff, cy - eyeOff/2, eyeSize, eyeSize * 1.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + eyeOff, cy - eyeOff/2, eyeSize, eyeSize * 1.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Pupils
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath();
+    ctx.arc(cx - eyeOff + 1, cy - eyeOff/2 + 1, eyeSize * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + eyeOff + 1, cy - eyeOff/2 + 1, eyeSize * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Smile
+    ctx.beginPath();
+    ctx.arc(cx, cy + eyeOff * 0.4, size * 0.15, 0.1 * Math.PI, 0.9 * Math.PI);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // ── Draw particles ──
+  for (const p of game.particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+
+  // ── Completed overlay particles are drawn on top (no shake) ──
+  // (Particles after level complete are already in game.particles and rendered above)
+}
+
+// ===== HELPER: roundRect =====
+function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+  r = Math.min(r, w/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+// ========================================================================
+//  INPUT HANDLING
+// ========================================================================
+
+// Keyboard
+document.addEventListener('keydown', (e) => {
+  if (startScreen) return;
+  switch (e.key) {
+    case 'ArrowUp': e.preventDefault(); tryMove(-1, 0); break;
+    case 'ArrowDown': e.preventDefault(); tryMove(1, 0); break;
+    case 'ArrowLeft': e.preventDefault(); tryMove(0, -1); break;
+    case 'ArrowRight': e.preventDefault(); tryMove(0, 1); break;
+    case 'z': case 'Z': undo(); break;
+    case 'r': case 'R': restartLevel(); break;
+  }
+});
+
+// On-screen dpad via touch
+document.querySelectorAll('.dpad-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const dir = btn.dataset.dir;
+    switch (dir) {
+      case 'up': tryMove(-1, 0); break;
+      case 'down': tryMove(1, 0); break;
+      case 'left': tryMove(0, -1); break;
+      case 'right': tryMove(0, 1); break;
+    }
+  });
+  // Prevent default to avoid scrolling
+  btn.addEventListener('touchstart', (e) => e.preventDefault());
+});
+
+// ===== SWIPE CONTROLS (touch) =====
+let touchStartX = 0, touchStartY = 0;
+canvas.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+}, { passive: true });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  if (!e.changedTouches.length) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touchStartX;
+  const dy = t.clientY - touchStartY;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  const minSwipe = 20;
+
+  if (Math.max(absDx, absDy) < minSwipe) return;
+
+  if (absDx > absDy) {
+    tryMove(0, dx > 0 ? 1 : -1);
+  } else {
+    tryMove(dy > 0 ? 1 : -1, 0);
+  }
+}, { passive: true });
+
+// ===== BUTTONS =====
+document.getElementById('btnStart').addEventListener('click', () => {
+  startScreen = false;
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('gameUI').style.display = 'flex';
+  loadProgress();
+  loadLevel(0);
+  render();
+});
+
+document.getElementById('btnNext').addEventListener('click', () => {
+  const next = game.level + 1;
+  if (next < LEVELS_RAW.length) {
+    loadLevel(next);
+  } else {
+    showToast('已通关所有关卡!', 1500);
+  }
+});
+
+document.getElementById('btnRetryComplete').addEventListener('click', () => {
+  restartLevel();
+});
+
+document.getElementById('btnUndo').addEventListener('click', undo);
+
+document.getElementById('btnRestart').addEventListener('click', restartLevel);
+
+document.getElementById('btnMenu').addEventListener('click', () => {
+  if (menuOpen) {
+    closeMenu();
+  } else {
+    openMenu();
+  }
+});
+
+// ===== LEVEL MENU =====
+function openMenu() {
+  if (menuOpen) return;
+  menuOpen = true;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'menuOverlay';
+  overlay.style.cssText = `
+    position:absolute;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(6px);
+    z-index:80;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:20px;gap:16px;
+  `;
+
+  const title = document.createElement('h2');
+  title.textContent = '选择关卡';
+  title.style.cssText = 'color:#fff;font-size:24px;margin-bottom:8px;';
+
+  const grid = document.createElement('div');
+  grid.style.cssText = `
+    display:grid;grid-template-columns:repeat(5,1fr);gap:10px;max-width:400px;width:100%;
+  `;
+
+  for (let i = 0; i < LEVELS_RAW.length; i++) {
+    const btn = document.createElement('button');
+    const unlocked = i <= game.maxLevel;
+    btn.textContent = unlocked ? `${i + 1}` : '🔒';
+    btn.style.cssText = `
+      padding:14px 0;border-radius:12px;font-size:18px;font-weight:600;
+      cursor:${unlocked ? 'pointer' : 'default'};
+      background:${unlocked ? (i === game.level ? 'linear-gradient(135deg,#667eea,#764ba2)' : 'rgba(255,255,255,.1)') : 'rgba(255,255,255,.05)'};
+      color:${unlocked ? '#fff' : '#555'};
+      border:2px solid ${i === game.level ? 'rgba(102,126,234,.5)' : 'rgba(255,255,255,.05)'};
+      transition:transform .15s;
+    `;
+    if (unlocked) {
+      btn.addEventListener('click', () => {
+        closeMenu();
+        loadLevel(i);
+      });
+    }
+    grid.appendChild(btn);
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕ 关闭';
+  closeBtn.style.cssText = `
+    background:rgba(255,255,255,.1);border:none;color:#ccc;
+    padding:10px 30px;border-radius:10px;font-size:16px;cursor:pointer;margin-top:8px;
+  `;
+  closeBtn.addEventListener('click', closeMenu);
+
+  overlay.appendChild(title);
+  overlay.appendChild(grid);
+  overlay.appendChild(closeBtn);
+  document.getElementById('canvasWrap').appendChild(overlay);
+}
+
+function closeMenu() {
+  menuOpen = false;
+  const el = document.getElementById('menuOverlay');
+  if (el) el.remove();
+}
+
+// ===== RESTART =====
+function restartLevel() {
+  if (game.animating) return;
+  document.getElementById('levelComplete').style.display = 'none';
+  closeMenu();
+  loadLevel(game.level);
+}
+
+// ===== WINDOW RESIZE =====
+window.addEventListener('resize', () => {
+  if (!startScreen) {
+    resizeCanvas();
+    render();
+  }
+});
+
+// ========================================================================
+//  INIT
+// ========================================================================
+
+// Initial render on start screen background
+ctx.fillStyle = '#1a1a2e';
+ctx.fillRect(0, 0, canvas.width || 100, canvas.height || 100);
+
+console.log('🎨 彩色推箱 Color Push loaded!');
+console.log(`📦 ${LEVELS_RAW.length} levels available`);
+</script>
+</body>
+</html>

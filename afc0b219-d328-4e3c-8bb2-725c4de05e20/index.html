@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  一个太空射击游戏，飞船在屏幕底部左右移动按空格射击，敌人从上往下随机出现。有生命值、计分和游戏结束画面。
+-->
+<meta name="description" content="一个太空射击游戏，飞船在屏幕底部左右移动按空格射击，敌人从上往下随机出现。有生命值、计分和游戏结束画面。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>太空射击</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Courier New', monospace; overflow: hidden; touch-action: none; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+const W = 600, H = 800
+canvas.width = W
+canvas.height = H
+
+// --- STAR FIELD (parallax background) ---
+const stars = []
+for (let i = 0; i < 120; i++) {
+  stars.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    r: 0.5 + Math.random() * 1.5,
+    speed: 0.2 + Math.random() * 0.8,
+    brightness: 0.3 + Math.random() * 0.7
+  })
+}
+
+// --- PLAYER (spaceship at bottom) ---
+const player = {
+  x: W / 2,
+  y: H - 60,
+  w: 40,
+  h: 44,
+  speed: 5,
+  hp: 5,
+  maxHp: 5,
+  invincible: 0
+}
+
+// --- BULLETS ---
+let bullets = []
+const BULLET_SPEED = 10
+const FIRE_RATE = 12  // cooldown frames
+let fireCooldown = 0
+
+// --- ENEMIES ---
+let enemies = []
+let enemySpawnTimer = 0
+let enemySpawnInterval = 40  // frames between spawns
+let difficultyTimer = 0
+
+// --- PARTICLES ---
+let particles = []
+
+// --- INPUT ---
+const keys = {}
+
+document.addEventListener('keydown', e => {
+  keys[e.key] = true
+  // Prevent page scroll on arrow keys / space
+  if (e.key === ' ' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault()
+  }
+})
+document.addEventListener('keyup', e => {
+  keys[e.key] = false
+})
+
+// --- GAME STATE ---
+let score = 0
+let highScore = parseInt(localStorage.getItem('spaceShooterHigh') || '0')
+let gameOver = false
+
+// --- AUDIO (Web Audio API procedural sounds) ---
+let audioCtx = null
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  }
+}
+
+function playShootSound() {
+  try {
+    initAudio()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.08)
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08)
+    osc.start(audioCtx.currentTime)
+    osc.stop(audioCtx.currentTime + 0.08)
+  } catch(e) {}
+}
+
+function playExplosionSound() {
+  try {
+    initAudio()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(200, audioCtx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.3)
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3)
+    osc.start(audioCtx.currentTime)
+    osc.stop(audioCtx.currentTime + 0.3)
+  } catch(e) {}
+}
+
+function playHitSound() {
+  try {
+    initAudio()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(300, audioCtx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.15)
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15)
+    osc.start(audioCtx.currentTime)
+    osc.stop(audioCtx.currentTime + 0.15)
+  } catch(e) {}
+}
+
+// --- FUNCTIONS ---
+
+function spawnEnemy() {
+  const size = 26 + Math.random() * 14
+  const hp = Math.ceil(size / 12) + Math.floor(difficultyTimer / 600)
+  const speed = 1 + difficultyTimer / 1200 + Math.random() * 0.5
+  enemies.push({
+    x: size + Math.random() * (W - size * 2),
+    y: -size,
+    w: size,
+    h: size,
+    hp: hp,
+    maxHp: hp,
+    speed: Math.min(speed, 5),
+    wobble: Math.random() * Math.PI * 2,
+    wobbleSpeed: 0.02 + Math.random() * 0.03,
+    wobbleAmount: 20 + Math.random() * 30
+  })
+}
+
+function shoot() {
+  if (fireCooldown > 0) return
+  bullets.push({
+    x: player.x,
+    y: player.y - player.h / 2 - 4,
+    w: 4,
+    h: 14,
+    vy: -BULLET_SPEED
+  })
+  fireCooldown = FIRE_RATE
+  playShootSound()
+}
+
+function addExplosion(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2
+    const speed = 1 + Math.random() * 4
+    particles.push({
+      x, y, r: 2 + Math.random() * 5,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 20 + Math.random() * 30,
+      maxLife: 50,
+      color
+    })
+  }
+}
+
+function spawnPowerUp(x, y) {
+  if (Math.random() < 0.15) {
+    const type = Math.random() < 0.5 ? 'health' : 'speed'
+    enemies.push({
+      x, y,
+      w: 20, h: 20,
+      hp: 1,
+      maxHp: 1,
+      speed: 1.5,
+      isPowerUp: true,
+      powerType: type,
+      wobble: 0,
+      wobbleSpeed: 0,
+      wobbleAmount: 0
+    })
+  }
+}
+
+// --- UPDATE ---
+function update() {
+  if (gameOver) return
+
+  // Player movement (left/right only)
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) {
+    player.x -= player.speed
+  }
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) {
+    player.x += player.speed
+  }
+  player.x = Math.max(player.w / 2, Math.min(W - player.w / 2, player.x))
+
+  // Invincibility
+  if (player.invincible > 0) player.invincible--
+
+  // Shooting with space bar
+  if (keys[' '] || keys['Space']) {
+    shoot()
+  }
+  if (fireCooldown > 0) fireCooldown--
+
+  // Difficulty scaling
+  difficultyTimer++
+  enemySpawnInterval = Math.max(12, 40 - Math.floor(difficultyTimer / 300))
+
+  // Spawn enemies
+  enemySpawnTimer++
+  if (enemySpawnTimer >= enemySpawnInterval) {
+    enemySpawnTimer = 0
+    const count = 1 + Math.floor(difficultyTimer / 500)
+    for (let i = 0; i < Math.min(count, 4); i++) {
+      spawnEnemy()
+    }
+  }
+
+  // Bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i]
+    b.y += b.vy
+    if (b.y + b.h < 0) {
+      bullets.splice(i, 1)
+      continue
+    }
+
+    // Hit enemies
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j]
+      // AABB collision
+      if (b.x < e.x + e.w && b.x + b.w > e.x &&
+          b.y < e.y + e.h && b.y + b.h > e.y) {
+        bullets.splice(i, 1)
+        e.hp--
+        if (e.hp <= 0) {
+          if (e.isPowerUp) {
+            // Collect power-up
+            if (e.powerType === 'health') {
+              player.hp = Math.min(player.maxHp, player.hp + 1)
+            } else if (e.powerType === 'speed') {
+              player.speed = Math.min(8, player.speed + 0.5)
+            }
+            addExplosion(e.x + e.w / 2, e.y + e.h / 2, '#ffd700', 12)
+            score += 50
+          } else {
+            addExplosion(e.x + e.w / 2, e.y + e.h / 2, '#ff4444', 18)
+            score += 10 * (1 + Math.floor(difficultyTimer / 300))
+            spawnPowerUp(e.x + e.w / 2, e.y + e.h / 2)
+            playExplosionSound()
+          }
+          enemies.splice(j, 1)
+        } else {
+          playHitSound()
+        }
+        break
+      }
+    }
+  }
+
+  // Enemy movement (fall down with wobble)
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i]
+    if (e.isPowerUp) {
+      // Power-ups fall straight down
+      e.y += e.speed
+    } else {
+      // Normal enemies: fall down with slight wobble
+      e.wobble += e.wobbleSpeed
+      e.x += Math.sin(e.wobble) * 0.5
+      e.y += e.speed
+    }
+
+    // Remove if off screen
+    if (e.y > H + 50) {
+      enemies.splice(i, 1)
+      continue
+    }
+
+    // Check collision with player (only non-powerup enemies)
+    if (!e.isPowerUp && player.invincible === 0) {
+      if (player.x - player.w / 2 < e.x + e.w &&
+          player.x + player.w / 2 > e.x &&
+          player.y - player.h / 2 < e.y + e.h &&
+          player.y + player.h / 2 > e.y) {
+        player.hp--
+        player.invincible = 60
+        addExplosion(player.x, player.y, '#4ecca3', 12)
+        playExplosionSound()
+        enemies.splice(i, 1)
+        if (player.hp <= 0) {
+          gameOver = true
+          if (score > highScore) {
+            highScore = score
+            localStorage.setItem('spaceShooterHigh', String(highScore))
+          }
+          addExplosion(player.x, player.y, '#ff6b35', 40)
+          return
+        }
+      }
+    }
+
+    // Collect power-ups
+    if (e.isPowerUp) {
+      if (player.x - player.w / 2 < e.x + e.w &&
+          player.x + player.w / 2 > e.x &&
+          player.y - player.h / 2 < e.y + e.h &&
+          player.y + player.h / 2 > e.y) {
+        if (e.powerType === 'health') {
+          player.hp = Math.min(player.maxHp, player.hp + 1)
+        } else if (e.powerType === 'speed') {
+          player.speed = Math.min(8, player.speed + 0.5)
+        }
+        addExplosion(e.x + e.w / 2, e.y + e.h / 2, '#ffd700', 8)
+        score += 50
+        enemies.splice(i, 1)
+      }
+    }
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]
+    p.x += p.vx
+    p.y += p.vy
+    p.life--
+    p.vx *= 0.97
+    p.vy *= 0.97
+    if (p.life <= 0) particles.splice(i, 1)
+  }
+}
+
+// --- DRAW ---
+
+function drawPlayer() {
+  const px = player.x
+  const py = player.y
+  const hw = player.w / 2
+  const hh = player.h / 2
+
+  // Flash when invincible
+  if (player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0) {
+    ctx.globalAlpha = 0.5
+  }
+
+  // Spaceship body (triangle)
+  ctx.fillStyle = '#00e5ff'
+  ctx.beginPath()
+  ctx.moveTo(px, py - hh)           // nose
+  ctx.lineTo(px - hw, py + hh)      // bottom-left
+  ctx.lineTo(px + hw, py + hh)      // bottom-right
+  ctx.closePath()
+  ctx.fill()
+
+  // Cockpit
+  ctx.fillStyle = '#00b0d4'
+  ctx.beginPath()
+  ctx.moveTo(px, py - hh * 0.5)
+  ctx.lineTo(px - hw * 0.35, py + hh * 0.25)
+  ctx.lineTo(px + hw * 0.35, py + hh * 0.25)
+  ctx.closePath()
+  ctx.fill()
+
+  // Engine glow
+  ctx.fillStyle = '#ff6b35'
+  ctx.beginPath()
+  ctx.moveTo(px - hw * 0.4, py + hh - 2)
+  ctx.lineTo(px, py + hh + 10)
+  ctx.lineTo(px + hw * 0.4, py + hh - 2)
+  ctx.closePath()
+  ctx.fill()
+
+  // Engine side glow
+  ctx.fillStyle = '#ff9500'
+  ctx.beginPath()
+  ctx.moveTo(px - hw * 0.4, py + hh - 2)
+  ctx.lineTo(px - hw * 0.5, py + hh + 6)
+  ctx.lineTo(px - hw * 0.15, py + hh - 2)
+  ctx.closePath()
+  ctx.fill()
+
+  ctx.beginPath()
+  ctx.moveTo(px + hw * 0.4, py + hh - 2)
+  ctx.lineTo(px + hw * 0.5, py + hh + 6)
+  ctx.lineTo(px + hw * 0.15, py + hh - 2)
+  ctx.closePath()
+  ctx.fill()
+
+  ctx.globalAlpha = 1
+}
+
+function drawEnemy(e) {
+  if (e.isPowerUp) {
+    // Power-up: floating icon
+    const pulse = Math.sin(Date.now() / 200) * 0.2 + 0.8
+    ctx.globalAlpha = pulse
+    if (e.powerType === 'health') {
+      // Health cross
+      ctx.fillStyle = '#ff4444'
+      ctx.fillRect(e.x + e.w * 0.3, e.y, e.w * 0.4, e.h)
+      ctx.fillRect(e.x, e.y + e.h * 0.3, e.w, e.h * 0.4)
+    } else {
+      // Speed bolt
+      ctx.fillStyle = '#ffd700'
+      ctx.beginPath()
+      ctx.moveTo(e.x + e.w * 0.7, e.y)
+      ctx.lineTo(e.x + e.w * 0.2, e.y + e.h * 0.55)
+      ctx.lineTo(e.x + e.w * 0.45, e.y + e.h * 0.55)
+      ctx.lineTo(e.x + e.w * 0.3, e.y + e.h)
+      ctx.lineTo(e.x + e.w * 0.8, e.y + e.h * 0.45)
+      ctx.lineTo(e.x + e.w * 0.55, e.y + e.h * 0.45)
+      ctx.closePath()
+      ctx.fill()
+    }
+    ctx.globalAlpha = 1
+    return
+  }
+
+  const cx = e.x + e.w / 2
+  const cy = e.y + e.h / 2
+
+  // Enemy spaceship body
+  ctx.fillStyle = '#e94560'
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - e.h / 2)      // top
+  ctx.lineTo(cx - e.w / 2, cy + e.h / 2)  // bottom-left
+  ctx.lineTo(cx + e.w / 2, cy + e.h / 2)  // bottom-right
+  ctx.closePath()
+  ctx.fill()
+
+  // Enemy cockpit
+  ctx.fillStyle = '#c23152'
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - e.h * 0.1)
+  ctx.lineTo(cx - e.w * 0.3, cy + e.h * 0.3)
+  ctx.lineTo(cx + e.w * 0.3, cy + e.h * 0.3)
+  ctx.closePath()
+  ctx.fill()
+
+  // Enemy eyes
+  ctx.fillStyle = '#ffffff'
+  ctx.beginPath()
+  ctx.arc(cx - e.w * 0.2, cy + e.h * 0.1, 3, 0, Math.PI * 2)
+  ctx.arc(cx + e.w * 0.2, cy + e.h * 0.1, 3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#000'
+  ctx.beginPath()
+  ctx.arc(cx - e.w * 0.2, cy + e.h * 0.1, 1.5, 0, Math.PI * 2)
+  ctx.arc(cx + e.w * 0.2, cy + e.h * 0.1, 1.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // HP bar if damaged
+  if (e.hp < e.maxHp) {
+    const barW = e.w
+    const barH = 4
+    const barX = e.x
+    const barY = e.y - 8
+    ctx.fillStyle = '#333'
+    ctx.fillRect(barX, barY, barW, barH)
+    ctx.fillStyle = e.hp > 1 ? '#4ecca3' : '#ff4444'
+    ctx.fillRect(barX, barY, barW * (e.hp / e.maxHp), barH)
+  }
+}
+
+function drawHUD() {
+  // Health bar (top-left)
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'
+  ctx.fillRect(10, 10, 154, 22)
+  ctx.strokeStyle = '#333'
+  ctx.lineWidth = 1
+  ctx.strokeRect(10, 10, 154, 22)
+
+  const hpPercent = player.hp / player.maxHp
+  const hpColor = hpPercent > 0.5 ? '#4ecca3' : hpPercent > 0.25 ? '#ffd700' : '#ff4444'
+  ctx.fillStyle = hpColor
+  ctx.fillRect(12, 12, 150 * hpPercent, 18)
+
+  // HP text
+  ctx.fillStyle = '#fff'
+  ctx.font = '11px "Courier New", monospace'
+  ctx.textAlign = 'center'
+  ctx.fillText('HP ' + player.hp + '/' + player.maxHp, 87, 24)
+
+  // Score (top-center)
+  ctx.textAlign = 'center'
+  ctx.font = 'bold 22px "Courier New", monospace'
+  ctx.fillStyle = '#fff'
+  ctx.fillText(String(score).padStart(6, '0'), W / 2, 32)
+
+  // High score (top-right)
+  ctx.textAlign = 'right'
+  ctx.font = '12px "Courier New", monospace'
+  ctx.fillStyle = '#888'
+  ctx.fillText('最高 ' + String(highScore).padStart(6, '0'), W - 12, 24)
+
+  // Enemy count indicator
+  ctx.textAlign = 'left'
+  ctx.font = '11px "Courier New", monospace'
+  ctx.fillStyle = '#e94560'
+  ctx.fillText('敌人: ' + enemies.filter(e => !e.isPowerUp).length, 12, 46)
+
+  ctx.textAlign = 'left'
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(0,0,0,0.75)'
+  ctx.fillRect(0, 0, W, H)
+
+  // Game over text
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#ff4444'
+  ctx.font = 'bold 48px "Courier New", monospace'
+  ctx.fillText('游戏结束', W / 2, H / 2 - 80)
+
+  // Score
+  ctx.fillStyle = '#fff'
+  ctx.font = '24px "Courier New", monospace'
+  ctx.fillText('得分: ' + score, W / 2, H / 2 - 20)
+
+  // High score
+  ctx.fillStyle = '#ffd700'
+  ctx.font = '18px "Courier New", monospace'
+  ctx.fillText('最高分: ' + highScore, W / 2, H / 2 + 15)
+
+  // New record
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = '#ffd700'
+    ctx.font = 'bold 20px "Courier New", monospace'
+    ctx.fillText('★ 新纪录！ ★', W / 2, H / 2 + 50)
+  }
+
+  // Restart hint
+  ctx.fillStyle = '#aaa'
+  ctx.font = '16px "Courier New", monospace'
+  ctx.fillText('按 R 键重新开始', W / 2, H / 2 + 100)
+
+  ctx.textAlign = 'left'
+}
+
+// --- DRAW MAIN ---
+function draw() {
+  // Background
+  ctx.fillStyle = '#0a0a1a'
+  ctx.fillRect(0, 0, W, H)
+
+  // Parallax stars
+  for (const star of stars) {
+    star.y += star.speed
+    if (star.y > H) {
+      star.y = 0
+      star.x = Math.random() * W
+    }
+    ctx.globalAlpha = star.brightness * 0.8
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+
+  // Bullets (laser beams)
+  for (const b of bullets) {
+    const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + b.h)
+    grad.addColorStop(0, 'rgba(0, 229, 255, 0.1)')
+    grad.addColorStop(0.3, '#00e5ff')
+    grad.addColorStop(0.7, '#00e5ff')
+    grad.addColorStop(1, 'rgba(0, 229, 255, 0.1)')
+    ctx.fillStyle = grad
+    ctx.fillRect(b.x, b.y, b.w, b.h)
+
+    // Glow
+    ctx.shadowColor = '#00e5ff'
+    ctx.shadowBlur = 8
+    ctx.fillStyle = '#00e5ff'
+    ctx.fillRect(b.x + 1, b.y, 2, b.h)
+    ctx.shadowBlur = 0
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    drawEnemy(e)
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / p.maxLife
+    ctx.fillStyle = p.color
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+
+  // Player
+  drawPlayer()
+
+  // HUD
+  drawHUD()
+
+  // Game over
+  if (gameOver) {
+    drawGameOver()
+  }
+}
+
+// --- RESTART ---
+function restart() {
+  player.x = W / 2
+  player.y = H - 60
+  player.hp = player.maxHp
+  player.invincible = 0
+  player.speed = 5
+  bullets = []
+  enemies = []
+  particles = []
+  score = 0
+  gameOver = false
+  enemySpawnTimer = 0
+  enemySpawnInterval = 40
+  difficultyTimer = 0
+  fireCooldown = 0
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.key === 'r' || e.key === 'R') && gameOver) {
+    restart()
+  }
+  // Initialize audio on first keypress (needs user gesture)
+  if (!audioCtx) {
+    initAudio()
+  }
+})
+
+// --- RESIZE ---
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H)
+  canvas.style.width = (W * scale) + 'px'
+  canvas.style.height = (H * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+
+// --- GAME LOOP ---
+function gameLoop() {
+  update()
+  draw()
+  requestAnimationFrame(gameLoop)
+}
+gameLoop()
+
+// Click/tap to init audio
+canvas.addEventListener('click', () => initAudio())
+canvas.addEventListener('touchstart', () => initAudio())
+</script>
+</body>
+</html>

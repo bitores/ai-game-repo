@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  核心玩法：玩家操控一个能发出声音的音叉精灵，通过点击不同颜色的音砖产生声波，声波在迷宫中传播并激活同色的机关门或消除障碍物。玩家需要规划声波路径，利用反射、折射和叠加效应，将声波送达远处的目标音叉以解锁出口。操作方式：鼠标点击屏幕上的音砖发出声波；触屏设备上直接点击音砖。视觉风格：极简几何风格，深色背景中漂浮着半透明的彩色音砖，声波以环形波纹扩散，带有粒子效果，整体氛围静谧而富有秩序感。胜利条件：在每一关卡中，将声波传播到所有目标音叉，并点亮出口处的共鸣石，即可通关；若声波路径被阻挡或能量耗尽则失败。关卡逐步引入新元素如阻隔墙、可移动的回声镜、需组合频率的双色机关。
+-->
+<meta name="description" content="核心玩法：玩家操控一个能发出声音的音叉精灵，通过点击不同颜色的音砖产生声波，声波在迷宫中传播并激活同色的机关门或消除障碍物。玩家需要规划声波路径，利用反射、折射和叠加效应，将声波送达远处的目标音叉以解锁出口。操作方式：鼠标点击屏幕上的音砖发出声波；触屏设备上直接点击音砖。视觉风格：极简几何风格，深色背景中漂浮着半透明的彩色音砖，声波以环形波纹扩散，带有粒子效果，整体氛围静谧而富有秩序感。胜利条件：在每一关卡中，将声波传播到所有目标音叉，并点亮出口处的共鸣石，即可通关；若声波路径被阻挡或能量耗尽则失败。关卡逐步引入新元素如阻隔墙、可移动的回声镜、需组合频率的双色机关。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>回声迷宫 - Echo Maze</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100%;height:100%;overflow:hidden;
+  background:#0a0a1a;
+  font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  user-select:none;-webkit-user-select:none;touch-action:none
+}
+canvas{display:block;width:100%;height:100%}
+
+#ui-overlay{position:absolute;inset:0;pointer-events:none}
+#ui-overlay>*{pointer-events:auto}
+
+#level-info{
+  position:absolute;top:16px;left:50%;transform:translateX(-50%);
+  color:rgba(255,255,255,0.5);font-size:14px;letter-spacing:2px;text-align:center;
+  text-shadow:0 0 20px rgba(78,205,196,0.3)
+}
+#level-info .name{color:rgba(255,255,255,0.85);font-size:18px;font-weight:300}
+#level-info .hint{font-size:12px;color:rgba(255,255,255,0.3);margin-top:4px}
+
+#step-counter{
+  position:absolute;bottom:24px;left:50%;transform:translateX(-50%);
+  color:rgba(255,255,255,0.25);font-size:13px;letter-spacing:1px
+}
+
+#btn-panel{position:absolute;bottom:24px;right:24px;display:flex;gap:10px}
+#btn-panel button{
+  width:44px;height:44px;border-radius:50%;
+  border:1px solid rgba(255,255,255,0.12);
+  background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.4);
+  font-size:18px;cursor:pointer;transition:all 0.25s;
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)
+}
+#btn-panel button:hover{
+  background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7);
+  border-color:rgba(255,255,255,0.25)
+}
+
+.modal-overlay{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(5,5,15,0.85);backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  opacity:0;transition:opacity 0.5s ease;pointer-events:none;
+  z-index:10
+}
+.modal-overlay.show{opacity:1;pointer-events:auto}
+.modal-box{
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);border-radius:20px;
+  padding:48px 40px 36px;text-align:center;
+  max-width:380px;width:90%;
+  box-shadow:0 30px 80px rgba(0,0,0,0.6)
+}
+.modal-box h2{color:#fff;font-size:28px;font-weight:300;letter-spacing:4px;margin-bottom:8px}
+.modal-box p{color:rgba(255,255,255,0.45);font-size:14px;line-height:1.7;margin-bottom:24px}
+.modal-box .btn-primary{
+  background:rgba(78,205,196,0.12);
+  border:1px solid rgba(78,205,196,0.3);color:#4ecdc4;
+  padding:11px 40px;border-radius:30px;font-size:15px;
+  letter-spacing:2px;cursor:pointer;transition:all 0.3s;font-family:inherit
+}
+.modal-box .btn-primary:hover{
+  background:rgba(78,205,196,0.22);border-color:rgba(78,205,196,0.6);
+  box-shadow:0 0 30px rgba(78,205,196,0.12)
+}
+.modal-box .sub-text{font-size:12px;color:rgba(255,255,255,0.2);margin-top:14px}
+
+.level-btn{
+  width:40px;height:40px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);
+  background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.5);
+  font-size:14px;cursor:pointer;font-family:inherit;transition:all 0.2s
+}
+.level-btn:hover{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8)}
+.level-btn.active{
+  border-color:rgba(78,205,196,0.5);
+  background:rgba(78,205,196,0.12);color:#4ecdc4
+}
+
+@media(max-width:600px){
+  #level-info{font-size:12px;top:12px}
+  #level-info .name{font-size:15px}
+  .modal-box{padding:36px 20px 28px}
+  .modal-box h2{font-size:24px}
+  #btn-panel{bottom:16px;right:16px}
+  #btn-panel button{width:38px;height:38px;font-size:15px}
+  #step-counter{bottom:16px;font-size:11px}
+}
+</style>
+</head>
+<body>
+
+<canvas id="game-canvas"></canvas>
+
+<div id="ui-overlay">
+  <div id="level-info">
+    <div class="name" id="level-name">回声迷宫</div>
+    <div class="hint" id="level-hint">点击音砖释放声波</div>
+  </div>
+  <div id="step-counter">步数: 0</div>
+  <div id="btn-panel">
+    <button id="btn-reset" title="重试">↺</button>
+    <button id="btn-levels" title="选关">≡</button>
+  </div>
+
+  <div class="modal-overlay" id="modal-win">
+    <div class="modal-box">
+      <h2 id="win-title">✦ 共鸣 ✦</h2>
+      <p id="win-text">声波抵达了所有目标，<br>出口的共鸣石已经点亮。</p>
+      <button class="btn-primary" id="btn-next">下一关</button>
+      <div class="sub-text" id="win-steps"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal-lose">
+    <div class="modal-box">
+      <h2 style="color:rgba(255,107,107,0.7);font-weight:300;">⟡ 沉寂 ⟡</h2>
+      <p>所有音砖已尝试，<br>但声波未能抵达目标。</p>
+      <button class="btn-primary" id="btn-retry"
+        style="border-color:rgba(255,107,107,0.25);color:#ff6b6b;">重试</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal-levels">
+    <div class="modal-box">
+      <h2 style="font-size:20px;margin-bottom:20px;font-weight:300;">✦ 选择关卡 ✦</h2>
+      <div id="level-list" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:16px;"></div>
+      <button class="btn-primary" id="btn-close-levels"
+        style="border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.4);">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  ECHO MAZE  —  回声迷宫
+// ============================================================
+
+// ---------- COLOR PALETTE ----------
+const COLORS = [
+  { name:'cyan',   hex:'#4ecdc4' },
+  { name:'orange', hex:'#ff6b6b' },
+  { name:'yellow', hex:'#ffe66d' },
+  { name:'purple', hex:'#a78bfa' },
+];
+const BG_COLOR    = '#0a0a1a';
+const WALL_COLOR  = '#141428';
+const WALL_BORDER = '#1a1a35';
+
+// ---------- TILE ENCODING ----------
+const T = {
+  EMPTY:0, WALL:1,
+  B0:2,B1:3,B2:4,B3:5,
+  D0:6,D1:7,D2:8,D3:9,
+  T0:10,T1:11,T2:12,T3:13,
+  STONE:14, MIRROR1:15, MIRROR2:16
+};
+
+function tileColor(t){
+  if(t>=T.B0&&t<=T.B3)return t-T.B0;
+  if(t>=T.D0&&t<=T.D3)return t-T.D0;
+  if(t>=T.T0&&t<=T.T3)return t-T.T0;
+  return -1;
+}
+function tileType(t){
+  if(t===T.EMPTY)return'empty';
+  if(t===T.WALL)return'wall';
+  if(t>=T.B0&&t<=T.B3)return'brick';
+  if(t>=T.D0&&t<=T.D3)return'door';
+  if(t>=T.T0&&t<=T.T3)return'target';
+  if(t===T.STONE)return'stone';
+  if(t===T.MIRROR1||t===T.MIRROR2)return'mirror';
+  return'empty';
+}
+
+// ---------- LEVELS ----------
+const LEVELS = [
+  { name:'初次共鸣', hint:'点击青色音砖释放声波', w:7,h:7,
+    data:[
+      [0,0,0,0,0,0,0],[0,0,0,0,0,0,0],[0,0,0,0,0,0,0],
+      [0,0,2,0,0,0,0],[0,0,0,0,0,0,0],
+      [0,0,0,0,10,0,0],[0,0,0,0,0,14,0]] },
+  { name:'曲折路径', hint:'声波遇到墙壁会被阻挡', w:7,h:7,
+    data:[
+      [0,0,0,0,0,0,0],[0,2,0,0,0,0,0],
+      [0,0,1,1,0,0,0],[0,0,0,0,0,0,0],
+      [0,0,0,0,1,1,0],[0,0,0,0,0,10,0],
+      [0,0,0,0,0,0,14]] },
+  { name:'双色和弦', hint:'分别激活两个目标音叉', w:7,h:7,
+    data:[
+      [0,0,0,0,0,0,0],[0,2,0,0,3,0,0],
+      [0,0,1,1,1,0,0],[0,0,1,0,1,0,0],
+      [0,0,1,1,1,0,0],[0,10,0,0,11,0,0],
+      [0,0,0,14,0,0,0]] },
+  { name:'色彩之门', hint:'同色声波可打开同色门', w:8,h:7,
+    data:[
+      [0,0,0,0,0,0,0,0],[0,2,0,0,0,0,3,0],
+      [0,0,1,6,1,0,0,0],[0,0,0,0,0,0,0,0],
+      [0,0,1,7,1,0,0,0],[0,10,0,0,0,11,0,0],
+      [0,0,0,0,0,0,14,0]] },
+  { name:'回声之镜', hint:'声波穿过镜面产生反射', w:8,h:8,
+    data:[
+      [0,0,0,0,0,0,0,0],[0,2,0,0,15,0,0,0],
+      [0,0,0,16,0,0,0,0],[0,0,0,0,0,15,0,0],
+      [0,0,1,1,1,1,0,0],[0,0,0,16,0,0,0,0],
+      [0,0,0,0,10,0,0,0],[0,0,0,0,0,0,14,0]] },
+  { name:'迷宫回响', hint:'规划路径，节约声波能量', w:9,h:9,
+    data:[
+      [0,0,0,0,0,0,0,0,0],[0,2,0,1,1,1,0,0,0],
+      [0,0,0,0,0,1,0,0,0],[0,0,1,1,0,1,0,3,0],
+      [0,0,0,6,0,1,0,0,0],[0,1,0,0,0,0,0,1,0],
+      [0,0,0,1,1,7,1,1,0],[0,0,0,0,0,0,0,0,0],
+      [0,10,0,0,0,11,0,14,0]] },
+  { name:'三色交响', hint:'协调三种颜色的声波', w:9,h:9,
+    data:[
+      [0,0,0,0,0,0,0,0,0],[0,2,0,0,0,3,0,4,0],
+      [0,0,1,1,1,1,1,0,0],[0,0,1,0,0,0,1,0,0],
+      [0,0,1,0,0,0,1,0,0],[0,0,1,0,0,0,1,0,0],
+      [0,0,1,6,0,7,1,0,0],[0,0,0,0,0,0,0,0,0],
+      [0,10,0,0,11,0,12,0,14]] },
+  { name:'和谐共鸣', hint:'综合运用所有技巧', w:10,h:10,
+    data:[
+      [0,0,0,0,0,0,0,0,0,0],[0,2,0,0,1,0,0,3,0,0],
+      [0,0,1,0,0,0,1,1,0,0],[0,0,1,0,0,15,0,0,0,0],
+      [0,0,0,0,1,1,6,0,0,0],[0,16,0,0,0,0,0,0,0,0],
+      [0,0,1,1,7,1,1,0,0,0],[0,0,0,0,0,0,0,0,4,0],
+      [0,0,0,0,0,0,1,1,1,0],[0,10,0,0,11,0,0,12,0,14]] },
+];
+
+// ============================================================
+//  AUDIO — Web Audio API
+// ============================================================
+const AudioMgr = {
+  ctx:null, inited:false,
+  init(){
+    if(this.inited)return;
+    try{this.ctx=new(window.AudioContext||window.webkitAudioContext)();this.inited=true}catch(e){}
+  },
+  _ensure(){if(!this.inited)this.init();if(this.ctx&&this.ctx.state==='suspended')this.ctx.resume()},
+  _note(f,dur,type='sine',vol=0.08){
+    this._ensure();if(!this.ctx)return;
+    const o=this.ctx.createOscillator(),g=this.ctx.createGain();
+    o.connect(g);g.connect(this.ctx.destination);
+    o.type=type;o.frequency.setValueAtTime(f,this.ctx.currentTime);
+    g.gain.setValueAtTime(vol,this.ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+dur);
+    o.start();o.stop(this.ctx.currentTime+dur);
+  },
+  brick(c){const fs=[523,659,784,880];this._note(fs[c%fs.length],0.15,'sine',0.07)},
+  wave(){this._note(220,0.06,'sine',0.025)},
+  activate(){this._note(880,0.12,'sine',0.08);setTimeout(()=>this._note(1100,0.2,'sine',0.06),100)},
+  door(){this._note(660,0.08,'triangle',0.05);setTimeout(()=>this._note(990,0.1,'triangle',0.04),80)},
+  win(){[523,659,784,1047].forEach((f,i)=>setTimeout(()=>this._note(f,0.25,'sine',0.07),i*120))},
+  lose(){this._note(300,0.2,'sawtooth',0.04);setTimeout(()=>this._note(200,0.3,'sawtooth',0.03),150)},
+  stone(){this._note(1200,0.3,'sine',0.06);setTimeout(()=>this._note(1500,0.4,'sine',0.05),200)},
+  reflect(){this._note(500,0.05,'triangle',0.035)},
+};
+
+// ============================================================
+//  PARTICLES
+// ============================================================
+class Particle{
+  constructor(x,y,color,speed,size){
+    const a=Math.random()*Math.PI*2,sp=speed||(1+Math.random()*2);
+    this.x=x;this.y=y;this.vx=Math.cos(a)*sp;this.vy=Math.sin(a)*sp-0.5;
+    this.life=1;this.decay=0.015+Math.random()*0.018;
+    this.size=size||(2+Math.random()*3);
+    this.color=color||'#fff';this.initialLife=1;
+  }
+  update(){this.x+=this.vx;this.y+=this.vy;this.vy+=0.03;this.life-=this.decay}
+  draw(ctx){
+    if(this.life<=0)return;
+    ctx.globalAlpha=this.life*0.8;
+    ctx.fillStyle=this.color;
+    const s=this.size*(0.3+0.7*this.life);
+    ctx.beginPath();ctx.arc(this.x,this.y,s,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+}
+class ParticleSystem{
+  constructor(){this.p=[]}
+  emit(x,y,color,count=15,speed,size){
+    for(let i=0;i<count;i++)this.p.push(new Particle(x,y,color,speed,size))
+  }
+  emitRing(x,y,color,count=20,radius=20){
+    for(let i=0;i<count;i++){
+      const a=(i/count)*Math.PI*2,r=radius*(0.8+Math.random()*0.2);
+      const p=new Particle(x+Math.cos(a)*r,y+Math.sin(a)*r,color,0.5+Math.random(),1.5);
+      p.vx=-Math.cos(a)*(0.5+Math.random());p.vy=-Math.sin(a)*(0.5+Math.random());
+      this.p.push(p);
+    }
+  }
+  update(){for(let i=this.p.length-1;i>=0;i--){this.p[i].update();if(this.p[i].life<=0)this.p.splice(i,1)}}
+  draw(ctx){for(const p of this.p)p.draw(ctx)}
+  clear(){this.p.length=0}
+}
+
+// ============================================================
+//  BACKGROUND STARS
+// ============================================================
+class BGStars{
+  constructor(n=100){
+    this.s=[];
+    for(let i=0;i<n;i++)this.s.push({x:Math.random(),y:Math.random(),size:0.3+Math.random()*1.2,a:0.1+Math.random()*0.35,sp:0.015+Math.random()*0.04,ph:Math.random()*Math.PI*2})
+  }
+  draw(ctx,w,h,t){
+    for(const s of this.s){
+      const tw=0.5+0.5*Math.sin(t*s.sp+s.ph);
+      ctx.globalAlpha=s.a*(0.5+0.5*tw);
+      ctx.fillStyle='#fff';
+      ctx.beginPath();ctx.arc(s.x*w,s.y*h,s.size,0,Math.PI*2);ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+}
+
+// ============================================================
+//  WAVE PROPAGATION
+// ============================================================
+class Wave{
+  constructor(col,row,color,maxSteps){
+    this.color=color;
+    this.origin={col,row};
+    this.frontier=[{col,row,fromDir:-1,rippleProgress:0}];
+    this.reached=new Set([`${col},${row}`]);
+    this.step=0;this.maxSteps=maxSteps||14;
+    this.done=false;this.allNodes=[this.frontier[0]];
+  }
+  advance(grid,width,height,doors){
+    if(this.done)return false;
+    if(this.step>=this.maxSteps||this.frontier.length===0){this.done=true;return false}
+    this.step++;
+    const next=[],nextSet=new Set();
+    const dirs=[[-1,0,0],[0,1,1],[1,0,2],[0,-1,3]];
+    for(const node of this.frontier){
+      for(const [dr,dc,dir]of dirs){
+        const nr=node.row+dr,nc=node.col+dc,key=`${nc},${nr}`;
+        if(nr<0||nr>=height||nc<0||nc>=width)continue;
+        if(this.reached.has(key)||nextSet.has(key))continue;
+        const cell=grid[nr][nc],type=tileType(cell),cColor=tileColor(cell);
+        if(type==='wall')continue;
+        if(type==='door'){
+          const d=doors.get(key);
+          if(d&&!d.open){
+            if(cColor===this.color){
+              d.open=true;d.openedThisStep=true;AudioMgr.door();
+              const n={col:nc,row:nr,fromDir:dir,rippleProgress:0};
+              next.push(n);nextSet.add(key);this.reached.add(key);this.allNodes.push(n);
+            }
+            continue;
+          }
+          if(d&&d.open){
+            const n={col:nc,row:nr,fromDir:dir,rippleProgress:0};
+            next.push(n);nextSet.add(key);this.reached.add(key);this.allNodes.push(n);
+            continue;
+          }
+        }
+        if(type==='mirror'){AudioMgr.reflect();const n={col:nc,row:nr,fromDir:(dir+2)%4,rippleProgress:0};next.push(n);nextSet.add(key);this.reached.add(key);this.allNodes.push(n);continue}
+        const n={col:nc,row:nr,fromDir:dir,rippleProgress:0};
+        next.push(n);nextSet.add(key);this.reached.add(key);this.allNodes.push(n);
+      }
+    }
+    this.frontier=next;
+    if(this.frontier.length===0)this.done=true;
+    return true;
+  }
+}
+
+// ============================================================
+//  GAME
+// ============================================================
+class EchoMaze{
+  constructor(canvas){
+    this.canvas=canvas;this.ctx=canvas.getContext('2d');
+    this.w=0;this.h=0;this.dpr=1;
+    this.currentLevel=0;this.steps=0;this.gameState='idle';
+    this.grid=[];this.gw=0;this.gh=0;
+    this.doors=new Map();this.targets=[];this.bricks=[];this.stonePos=null;this.stoneLit=false;
+    this.usedBricks=new Set();
+    this.waves=[];this.waveTimer=0;this.waveInterval=0.35;this.propagationDone=false;
+    this.particles=new ParticleSystem();this.stars=new BGStars(90);this.time=0;
+    this.gridX=0;this.gridY=0;this.cellSize=0;
+    this._lastClickFeedback=0;
+
+    this.resize();
+    window.addEventListener('resize',()=>this.resize());
+
+    document.getElementById('btn-reset').addEventListener('click',()=>this.resetLevel());
+    document.getElementById('btn-levels').addEventListener('click',()=>this.showLevels());
+    document.getElementById('btn-next').addEventListener('click',()=>this.nextLevel());
+    document.getElementById('btn-retry').addEventListener('click',()=>this.resetLevel());
+    document.getElementById('btn-close-levels').addEventListener('click',()=>this.hideLevels());
+
+    this._pd=this._pd.bind(this);
+    canvas.addEventListener('pointerdown',this._pd);
+    canvas.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+
+    this.loadLevel(0);
+    this.loop(0);
+  }
+
+  resize(){
+    this.dpr=window.devicePixelRatio||1;
+    const w=window.innerWidth,h=window.innerHeight;
+    this.canvas.width=w*this.dpr;this.canvas.height=h*this.dpr;
+    this.canvas.style.width=w+'px';this.canvas.style.height=h+'px';
+    this.w=w;this.h=h;
+    this.ctx.setTransform(this.dpr,0,0,this.dpr,0,0);
+    if(this.gw>0)this.computeLayout();
+  }
+
+  loadLevel(idx){
+    if(idx<0||idx>=LEVELS.length)idx=0;
+    this.currentLevel=idx;const lv=LEVELS[idx];
+    this.steps=0;this.gameState='idle';
+    this.waves=[];this.waveTimer=0;this.propagationDone=false;this.stoneLit=false;
+    this.particles.clear();this.usedBricks.clear();
+    this.gh=lv.h;this.gw=lv.w;
+    this.grid=[];this.doors=new Map();this.targets=[];this.bricks=[];this.stonePos=null;
+    for(let r=0;r<this.gh;r++){
+      this.grid[r]=[];
+      for(let c=0;c<this.gw;c++){
+        const t=lv.data[r][c];this.grid[r][c]=t;
+        const tp=tileType(t),cl=tileColor(t);
+        if(tp==='brick')this.bricks.push({col:c,row:r,color:cl});
+        else if(tp==='target')this.targets.push({col:c,row:r,color:cl,activated:false});
+        else if(tp==='door')this.doors.set(`${c},${r}`,{open:false,color:cl,openedThisStep:false});
+        else if(tp==='stone')this.stonePos={col:c,row:r};
+      }
+    }
+    this.computeLayout();this.updateUI();this.hideAllModals();AudioMgr.init();
+    document.getElementById('level-name').textContent=`§ ${lv.name}`;
+    document.getElementById('level-hint').textContent=lv.hint||'点击音砖释放声波';
+  }
+
+  computeLayout(){
+    const pad=60;
+    const mcw=(this.w-pad*2)/this.gw,mch=(this.h-pad*2-60)/this.gh;
+    this.cellSize=Math.min(mcw,mch,72);this.cellSize=Math.max(this.cellSize,30);
+    this.gridX=(this.w-this.cellSize*this.gw)/2;
+    this.gridY=(this.h-this.cellSize*this.gh)/2;
+  }
+
+  resetLevel(){this.hideAllModals();this.loadLevel(this.currentLevel)}
+  nextLevel(){this.hideAllModals();this.loadLevel(this.currentLevel+1<LEVELS.length?this.currentLevel+1:0)}
+
+  startWave(col,row){
+    if(this.gameState!=='idle')return;
+    const cell=this.grid[row][col],color=tileColor(cell);
+    if(color<0)return;
+    this.usedBricks.add(`${col},${row}`);
+    const wave=new Wave(col,row,color,14);
+    this.waves=[wave];this.waveTimer=0;this.propagationDone=false;
+    this.gameState='propagating';this.steps++;this.updateUI();
+    AudioMgr.brick(color);
+    const cx=this.gridX+col*this.cellSize+this.cellSize/2;
+    const cy=this.gridY+row*this.cellSize+this.cellSize/2;
+    this.particles.emitRing(cx,cy,COLORS[color].hex,14,this.cellSize*0.3);
+    this._lastClickFeedback=this.time;
+  }
+
+  advanceWaves(){
+    if(this.propagationDone)return;
+    let allDone=true;
+    for(const wave of this.waves){
+      if(wave.done)continue;
+      const adv=wave.advance(this.grid,this.gw,this.gh,this.doors);
+      if(adv){
+        allDone=false;AudioMgr.wave();
+        for(const node of wave.frontier){
+          const cl=COLORS[wave.color].hex;
+          const cx=this.gridX+node.col*this.cellSize+this.cellSize/2;
+          const cy=this.gridY+node.row*this.cellSize+this.cellSize/2;
+          this.particles.emit(cx,cy,cl,2,0.5,1.5);
+          const cell=this.grid[node.row][node.col],tp=tileType(cell),ccl=tileColor(cell);
+          if(tp==='target'&&ccl===wave.color)this.activateTarget(node.col,node.row);
+          if(tp==='stone')this.activateStone();
+        }
+      }else if(!wave.done)allDone=false;
+    }
+    if(allDone){this.propagationDone=true;this.onEnd()}
+  }
+
+  activateTarget(col,row){
+    const t=this.targets.find(t=>t.col===col&&t.row===row);
+    if(!t||t.activated)return;
+    t.activated=true;AudioMgr.activate();
+    const cx=this.gridX+col*this.cellSize+this.cellSize/2;
+    const cy=this.gridY+row*this.cellSize+this.cellSize/2;
+    this.particles.emitRing(cx,cy,COLORS[t.color].hex,22,this.cellSize*0.4);
+  }
+
+  activateStone(){
+    if(this.stoneLit)return;
+    this.stoneLit=true;AudioMgr.stone();
+    if(this.stonePos){
+      const cx=this.gridX+this.stonePos.col*this.cellSize+this.cellSize/2;
+      const cy=this.gridY+this.stonePos.row*this.cellSize+this.cellSize/2;
+      this.particles.emitRing(cx,cy,'#f0f0ff',26,this.cellSize*0.5);
+    }
+  }
+
+  onEnd(){
+    const allActive=this.targets.every(t=>t.activated);
+    if(allActive&&this.stoneLit){
+      this.gameState='won';AudioMgr.win();this.showWin();return;
+    }
+    // If all unique bricks have been tried and wave(s) done, it's a loss
+    if(this.usedBricks.size>=this.bricks.length&&this.bricks.length>0){
+      this.gameState='lost';AudioMgr.lose();this.showLose();return;
+    }
+    // If no more bricks exist at all, it's a loss
+    if(this.bricks.length===0){
+      this.gameState='lost';AudioMgr.lose();this.showLose();return;
+    }
+    this.gameState='idle';
+  }
+
+  // ---------- INPUT ----------
+  _pd(e){
+    if(this.gameState!=='idle')return;
+    const rect=this.canvas.getBoundingClientRect();
+    const x=e.clientX-rect.left,y=e.clientY-rect.top;
+    const col=Math.floor((x-this.gridX)/this.cellSize);
+    const row=Math.floor((y-this.gridY)/this.cellSize);
+    if(col<0||col>=this.gw||row<0||row>=this.gh)return;
+    const cell=this.grid[row][col],tp=tileType(cell);
+    if(tp==='brick')this.startWave(col,row);
+  }
+
+  // ---------- UI ----------
+  updateUI(){document.getElementById('step-counter').textContent=`步数: ${this.steps}`}
+  showWin(){
+    const el=document.getElementById('modal-win');
+    document.getElementById('win-steps').textContent=`用了 ${this.steps} 步`;
+    const isLast=this.currentLevel+1>=LEVELS.length;
+    document.getElementById('win-title').textContent=isLast?'✦ 通关 ✦':'✦ 共鸣 ✦';
+    document.getElementById('win-text').innerHTML=isLast?'所有关卡完成！<br>迷宫在回声中苏醒。':'声波抵达了所有目标，<br>出口的共鸣石已经点亮。';
+    document.getElementById('btn-next').textContent=isLast?'重新开始':'下一关';
+    el.classList.add('show');
+  }
+  showLose(){document.getElementById('modal-lose').classList.add('show')}
+  hideAllModals(){document.querySelectorAll('.modal-overlay').forEach(e=>e.classList.remove('show'))}
+  showLevels(){
+    const c=document.getElementById('level-list');c.innerHTML='';
+    LEVELS.forEach((_,i)=>{
+      const b=document.createElement('button');
+      b.textContent=`${i+1}`;
+      b.className='level-btn'+(i===this.currentLevel?' active':'');
+      b.addEventListener('click',()=>{this.hideLevels();this.loadLevel(i)});
+      c.appendChild(b);
+    });
+    document.getElementById('modal-levels').classList.add('show');
+  }
+  hideLevels(){document.getElementById('modal-levels').classList.remove('show')}
+
+  // ---------- RENDER ----------
+  drawBG(){
+    const ctx=this.ctx;
+    ctx.fillStyle=BG_COLOR;ctx.fillRect(0,0,this.w,this.h);
+    this.stars.draw(ctx,this.w,this.h,this.time);
+  }
+
+  drawGrid(){
+    const ctx=this.ctx,cs=this.cellSize,ox=this.gridX,oy=this.gridY;
+    // Subtle grid lines
+    ctx.strokeStyle='rgba(255,255,255,0.03)';ctx.lineWidth=0.5;
+    for(let r=0;r<=this.gh;r++){ctx.beginPath();ctx.moveTo(ox,oy+r*cs);ctx.lineTo(ox+this.gw*cs,oy+r*cs);ctx.stroke()}
+    for(let c=0;c<=this.gw;c++){ctx.beginPath();ctx.moveTo(ox+c*cs,oy);ctx.lineTo(ox+c*cs,oy+this.gh*cs);ctx.stroke()}
+
+    for(let r=0;r<this.gh;r++)for(let c=0;c<this.gw;c++){
+      const t=this.grid[r][c],tp=tileType(t),ci=tileColor(t),x=ox+c*cs,y=oy+r*cs;
+      if(tp==='wall')this.drawWall(ctx,x,y,cs);
+      else if(tp==='brick')this.drawBrick(ctx,x,y,cs,ci,c,r);
+      else if(tp==='door')this.drawDoor(ctx,x,y,cs,ci,this.doors.get(`${c},${r}`));
+      else if(tp==='target'){const tg=this.targets.find(t=>t.col===c&&t.row===r);this.drawTarget(ctx,x,y,cs,ci,tg)}
+      else if(tp==='stone')this.drawStone(ctx,x,y,cs);
+      else if(tp==='mirror')this.drawMirror(ctx,x,y,cs,t);
+    }
+  }
+
+  drawWall(ctx,x,y,cs){
+    ctx.fillStyle=WALL_COLOR;ctx.fillRect(x,y,cs,cs);
+    ctx.strokeStyle=WALL_BORDER;ctx.lineWidth=0.5;ctx.strokeRect(x,y,cs,cs);
+    ctx.fillStyle='rgba(255,255,255,0.015)';ctx.fillRect(x+2,y+2,cs-4,1);
+  }
+
+  drawBrick(ctx,x,y,cs,ci,col,row){
+    const color=COLORS[ci],cx=x+cs/2,cy=y+cs/2,pad=cs*0.08;
+    const pulse=0.5+0.5*Math.sin(this.time*1.8+col*2.1+row*1.7);
+    const glow=ctx.createRadialGradient(cx,cy,0,cx,cy,cs*0.9);
+    glow.addColorStop(0,`rgba(${hexRGB(color.hex)},${0.12*pulse})`);
+    glow.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=glow;ctx.fillRect(x-cs*0.3,y-cs*0.3,cs*1.6,cs*1.6);
+
+    // Click flash feedback
+    const flash=this._lastClickFeedback>0&&this.time-this._lastClickFeedback<0.3&&col===this.waves[0]?.origin.col&&row===this.waves[0]?.origin.row?0.15:0;
+    ctx.fillStyle=`rgba(${hexRGB(color.hex)},${0.2+flash})`;
+    this.roundedRect(ctx,x+pad,y+pad,cs-pad*2,cs-pad*2,5);ctx.fill();
+    ctx.strokeStyle=`rgba(${hexRGB(color.hex)},${0.4+flash*2})`;
+    ctx.lineWidth=1.5;this.roundedRect(ctx,x+pad,y+pad,cs-pad*2,cs-pad*2,5);ctx.stroke();
+
+    this.tuningFork(ctx,cx,cy,cs*0.18,color.hex);
+  }
+
+  tuningFork(ctx,x,y,sz,hex){
+    ctx.strokeStyle=`rgba(${hexRGB(hex)},0.7)`;ctx.lineWidth=Math.max(1.5,sz*0.3);ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(x-sz*0.4,y-sz);ctx.lineTo(x-sz*0.4,y+sz*0.6);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+sz*0.4,y-sz);ctx.lineTo(x+sz*0.4,y+sz*0.6);ctx.stroke();
+    ctx.beginPath();ctx.arc(x,y+sz*0.6,sz*0.45,Math.PI,0);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x,y+sz*0.6);ctx.lineTo(x,y+sz*1.3);ctx.stroke();
+    ctx.fillStyle=`rgba(${hexRGB(hex)},0.5)`;ctx.beginPath();ctx.arc(x,y+sz*1.3,sz*0.12,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.moveTo(x-sz*0.5,y-sz*0.1);ctx.lineTo(x+sz*0.5,y-sz*0.1);ctx.stroke();
+  }
+
+  drawDoor(ctx,x,y,cs,ci,door){
+    const color=COLORS[ci],pad=cs*0.06,open=door&&door.open;
+    if(open){
+      ctx.strokeStyle=`rgba(${hexRGB(color.hex)},0.12)`;ctx.lineWidth=1;ctx.setLineDash([4,4]);
+      this.roundedRect(ctx,x+pad,y+pad,cs-pad*2,cs-pad*2,4);ctx.stroke();ctx.setLineDash([]);
+      const g=ctx.createRadialGradient(x+cs/2,y+cs/2,0,x+cs/2,y+cs/2,cs*0.6);
+      g.addColorStop(0,`rgba(${hexRGB(color.hex)},0.06)`);g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g;ctx.fillRect(x,y,cs,cs);
+    }else{
+      ctx.fillStyle=`rgba(${hexRGB(color.hex)},0.12)`;
+      this.roundedRect(ctx,x+pad,y+pad,cs-pad*2,cs-pad*2,4);ctx.fill();
+      ctx.strokeStyle=`rgba(${hexRGB(color.hex)},0.4)`;ctx.lineWidth=1.5;
+      this.roundedRect(ctx,x+pad,y+pad,cs-pad*2,cs-pad*2,4);ctx.stroke();
+      const cx=x+cs/2,cy=y+cs/2,ds=cs*0.1;
+      ctx.fillStyle=`rgba(${hexRGB(color.hex)},0.5)`;
+      ctx.beginPath();ctx.moveTo(cx,cy-ds);ctx.lineTo(cx+ds,cy);ctx.lineTo(cx,cy+ds);ctx.lineTo(cx-ds,cy);ctx.closePath();ctx.fill();
+    }
+  }
+
+  drawTarget(ctx,x,y,cs,ci,target){
+    const color=COLORS[ci],cx=x+cs/2,cy=y+cs/2,act=target&&target.activated,rad=cs*0.28;
+    if(act){
+      const g=ctx.createRadialGradient(cx,cy,0,cx,cy,rad*2.5);
+      g.addColorStop(0,`rgba(${hexRGB(color.hex)},0.35)`);g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g;ctx.fillRect(x-cs,y-cs,cs*3,cs*3);
+    }
+    ctx.strokeStyle=act?`rgba(${hexRGB(color.hex)},0.9)`:`rgba(${hexRGB(color.hex)},0.35)`;
+    ctx.lineWidth=act?2.5:1.5;
+    ctx.beginPath();ctx.arc(cx,cy,rad,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle=act?color.hex:`rgba(${hexRGB(color.hex)},0.25)`;
+    ctx.beginPath();ctx.arc(cx,cy,rad*0.3,0,Math.PI*2);ctx.fill();
+    if(!act){
+      ctx.strokeStyle=`rgba(${hexRGB(color.hex)},0.25)`;ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(cx-rad*0.7,cy);ctx.lineTo(cx+rad*0.7,cy);ctx.moveTo(cx,cy-rad*0.7);ctx.lineTo(cx,cy+rad*0.7);ctx.stroke();
+    }
+  }
+
+  drawStone(ctx,x,y,cs){
+    const cx=x+cs/2,cy=y+cs/2,r=cs*0.28,lit=this.stoneLit;
+    const pulse=lit?0.6+0.4*Math.sin(this.time*3):0.15+0.1*Math.sin(this.time);
+    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,r*2.5);
+    const gc=lit?'200,220,255':'150,150,180';
+    g.addColorStop(0,`rgba(${gc},${0.35*pulse})`);g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g;ctx.fillRect(x-cs,y-cs,cs*3,cs*3);
+
+    ctx.fillStyle=lit?'#f0f0ff':'rgba(200,200,220,0.15)';
+    ctx.beginPath();
+    for(let i=0;i<8;i++){const a=i/8*Math.PI*2-Math.PI/2,px=cx+r*Math.cos(a),py=cy+r*Math.sin(a);i===0?ctx.moveTo(px,py):ctx.lineTo(px,py)}
+    ctx.closePath();ctx.fill();
+    ctx.strokeStyle=lit?'rgba(200,220,255,0.7)':'rgba(200,200,220,0.25)';ctx.lineWidth=1.5;ctx.stroke();
+    if(lit){
+      const gs=r*0.3;ctx.fillStyle='#fff';
+      ctx.beginPath();ctx.moveTo(cx,cy-gs);ctx.lineTo(cx+gs*0.7,cy);ctx.lineTo(cx,cy+gs);ctx.lineTo(cx-gs*0.7,cy);ctx.closePath();ctx.fill();
+    }
+  }
+
+  drawMirror(ctx,x,y,cs,tile){
+    ctx.fillStyle='rgba(200,220,255,0.02)';ctx.fillRect(x,y,cs,cs);
+    ctx.strokeStyle='rgba(200,220,255,0.35)';ctx.lineWidth=2;
+    if(tile===T.MIRROR1){
+      ctx.beginPath();ctx.moveTo(x+cs*0.18,y+cs*0.82);ctx.lineTo(x+cs*0.82,y+cs*0.18);ctx.stroke();
+      ctx.strokeStyle='rgba(200,220,255,0.1)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(x+cs*0.32,y+cs*0.72);ctx.lineTo(x+cs*0.72,y+cs*0.32);ctx.stroke();
+    }else{
+      ctx.beginPath();ctx.moveTo(x+cs*0.18,y+cs*0.18);ctx.lineTo(x+cs*0.82,y+cs*0.82);ctx.stroke();
+      ctx.strokeStyle='rgba(200,220,255,0.1)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(x+cs*0.32,y+cs*0.32);ctx.lineTo(x+cs*0.72,y+cs*0.72);ctx.stroke();
+    }
+    ctx.fillStyle='rgba(200,220,255,0.12)';
+    ctx.font=`${cs*0.18}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+    if(tile===T.MIRROR1){ctx.fillText('↗',x+cs*0.78,y+cs*0.22);ctx.fillText('↙',x+cs*0.22,y+cs*0.78)}
+    else{ctx.fillText('↖',x+cs*0.22,y+cs*0.22);ctx.fillText('↘',x+cs*0.78,y+cs*0.78)}
+  }
+
+  drawWaves(){
+    const ctx=this.ctx;
+    for(const wave of this.waves){
+      const color=COLORS[wave.color].hex;
+      for(const node of wave.allNodes){
+        const cx=this.gridX+node.col*this.cellSize+this.cellSize/2;
+        const cy=this.gridY+node.row*this.cellSize+this.cellSize/2;
+        const br=Math.max(0,0.12*(1-Math.min(node.rippleProgress,1)));
+        if(br>0.005){
+          ctx.fillStyle=`rgba(${hexRGB(color)},${br})`;
+          ctx.fillRect(this.gridX+node.col*this.cellSize+1,this.gridY+node.row*this.cellSize+1,this.cellSize-2,this.cellSize-2);
+        }
+        // Ripple ring on frontier
+        if(wave.frontier.includes(node)){
+          const prog=node.rippleProgress;
+          ctx.strokeStyle=`rgba(${hexRGB(color)},${0.4*(1-prog)})`;
+          ctx.lineWidth=1.5*(1-prog+0.3);
+          ctx.beginPath();
+          ctx.arc(cx,cy,this.cellSize*0.2+prog*this.cellSize*0.7,0,Math.PI*2);
+          ctx.stroke();
+        }
+        // Inner dot on the wave origin
+        if(node.col===wave.origin.col&&node.row===wave.origin.row&&node===wave.frontier[0]){
+          ctx.fillStyle=`rgba(${hexRGB(color)},${0.6*(1-wave.step/wave.maxSteps)})`;
+          ctx.beginPath();ctx.arc(cx,cy,this.cellSize*0.08,0,Math.PI*2);ctx.fill();
+        }
+      }
+    }
+  }
+
+  roundedRect(ctx,x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+  }
+
+  // ---------- LOOP ----------
+  loop(t){
+    const dt=Math.min((t-(this._lt||t))/1000,0.05);this._lt=t;this.time+=dt;
+    this.update(dt);this.render();requestAnimationFrame(tt=>this.loop(tt));
+  }
+
+  update(dt){
+    this.particles.update();
+    if(this.gameState==='propagating'){
+      this.waveTimer+=dt;
+      for(const wave of this.waves){
+        for(const node of wave.frontier)node.rippleProgress=Math.min(1,this.waveTimer/this.waveInterval);
+        for(const node of wave.allNodes){if(!wave.frontier.includes(node))node.rippleProgress=Math.min(1,node.rippleProgress+dt*0.6)}
+      }
+      if(this.waveTimer>=this.waveInterval){this.waveTimer-=this.waveInterval;this.advanceWaves()}
+    }
+    for(const[,door]of this.doors)door.openedThisStep=false;
+  }
+
+  render(){
+    const ctx=this.ctx;
+    ctx.clearRect(0,0,this.w,this.h);
+    this.drawBG();
+    this.drawGrid();
+    this.drawWaves();
+    this.particles.draw(ctx);
+  }
+}
+
+// ============================================================
+//  UTILITY
+// ============================================================
+function hexRGB(hex){
+  return `${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)}`;
+}
+
+// ============================================================
+//  INIT
+// ============================================================
+const canvas=document.getElementById('game-canvas');
+const game=new EchoMaze(canvas);
+document.addEventListener('click',()=>AudioMgr.init(),{once:true});
+document.addEventListener('touchstart',()=>AudioMgr.init(),{once:true});
+document.addEventListener('keydown',e=>{
+  if(e.key==='r'||e.key==='R')game.resetLevel();
+  if(e.key==='n'||e.key==='N')game.nextLevel();
+  if(e.key>='1'&&e.key<='8')game.loadLevel(parseInt(e.key)-1);
+});
+console.log('Echo Maze loaded — R=retry, N=next, 1-8=levels');
+</script>
+</body>
+</html>

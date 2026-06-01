@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  通过调整Vue3响应式数据触发computed和watch变化，解开层层谜题逃离迷宫。
+-->
+<meta name="description" content="通过调整Vue3响应式数据触发computed和watch变化，解开层层谜题逃离迷宫。">
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Vue3 响应式迷宫逃脱</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js" crossorigin="anonymous">
+  </script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,-apple-system,sans-serif}
+    body{background:#0a0a1a;color:#e0e0e0;touch-action:none;-webkit-user-select:none;user-select:none}
+    #app{width:100%;height:100%;display:flex;flex-direction:column;max-width:1200px;margin:0 auto;background:radial-gradient(ellipse at center,#12122a,#0a0a1a)}
+
+    /* ===== Header ===== */
+    .ghead{display:flex;justify-content:space-between;align-items:center;padding:6px 14px;background:rgba(15,15,40,.92);border-bottom:1px solid rgba(100,140,255,.15);flex-shrink:0;min-height:42px;gap:8px;z-index:10}
+    .gtitle{font-size:16px;font-weight:700;background:linear-gradient(135deg,#6488ff,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;white-space:nowrap}
+    .ginfo{display:flex;align-items:center;gap:10px;font-size:12px;color:#8899cc;flex-wrap:wrap}
+    .ginfo b{color:#fff;min-width:18px;text-align:center}
+    .ginfo .gdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#334;transition:all .3s}
+    .ginfo .gdot.on{background:#4ade80;box-shadow:0 0 6px #4ade80}
+
+    /* ===== Main Flex ===== */
+    .gmain{flex:1;display:flex;overflow:hidden;min-height:0}
+
+    /* ===== Canvas (maze) ===== */
+    .mwrap{flex:1;display:flex;align-items:center;justify-content:center;padding:6px;min-width:0;position:relative;background:radial-gradient(ellipse at center,#0e0e24,#0a0a1a)}
+    #mc{border-radius:8px;box-shadow:0 0 40px rgba(100,136,255,.06);max-width:100%;max-height:100%;image-rendering:pixelated}
+    .mwrap .prox-hint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(136,153,204,.5);background:rgba(10,10,30,.8);padding:4px 12px;border-radius:12px;white-space:nowrap;pointer-events:none;border:1px solid rgba(100,140,255,.08)}
+    @media(max-width:540px){.mwrap .prox-hint{font-size:9px;padding:3px 10px;bottom:4px}}
+
+    /* ===== D-Pad (mobile) ===== */
+    .dpad{position:absolute;bottom:28px;left:12px;display:none;grid-template:42px 42px 42px/42px 42px 42px;gap:3px;z-index:5}
+    .dpad button{background:rgba(100,140,255,.06);border:1px solid rgba(100,140,255,.1);border-radius:6px;color:#6488ff;font-size:16px;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .08s}
+    .dpad button:active{background:rgba(100,140,255,.15)}
+    .dpad .d-empty{visibility:hidden}
+    .dpad .d-up{grid-column:2;grid-row:1}
+    .dpad .d-dn{grid-column:2;grid-row:3}
+    .dpad .d-lt{grid-column:1;grid-row:2}
+    .dpad .d-rt{grid-column:3;grid-row:2}
+    .dpad .d-mid{grid-column:2;grid-row:2;color:rgba(100,140,255,.15);background:transparent;border-color:rgba(100,140,255,.04);pointer-events:none}
+    @media(hover:none),(pointer:coarse){.dpad{display:grid}}
+
+    /* ===== Puzzle Panel ===== */
+    .ppanel{width:340px;min-width:340px;flex-shrink:0;background:rgba(12,12,35,.96);border-left:1px solid rgba(100,140,255,.1);display:flex;flex-direction:column;overflow:hidden}
+    .pphead{padding:6px 12px;background:rgba(100,140,255,.04);border-bottom:1px solid rgba(100,140,255,.08);font-size:11px;font-weight:600;color:#6488ff;display:flex;align-items:center;gap:6px;flex-shrink:0}
+    .pphead .pppulse{margin-left:auto;font-size:9px;font-weight:400;color:#445;font-family:monospace}
+
+    .ppbody{flex:1;overflow-y:auto;padding:8px 10px;scrollbar-width:thin;scrollbar-color:rgba(100,140,255,.2) transparent}
+    .ppbody::-webkit-scrollbar{width:4px}
+    .ppbody::-webkit-scrollbar-thumb{background:rgba(100,140,255,.15);border-radius:2px}
+
+    /* Puzzle Cards */
+    .pcard{background:rgba(20,20,55,.5);border:1px solid rgba(100,140,255,.08);border-radius:8px;padding:10px;margin-bottom:8px;transition:border-color .3s,box-shadow .3s}
+    .pcard.solved{border-color:rgba(74,222,128,.2);box-shadow:0 0 16px rgba(74,222,128,.04)}
+    .pcard.active{border-color:rgba(251,191,36,.2)}
+    .phead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+    .pname{font-size:12px;font-weight:600;color:#c8d0e0}
+    .pstatus{font-size:10px;padding:1px 8px;border-radius:8px;font-weight:500}
+    .pstatus.locked{background:rgba(239,68,68,.1);color:#f87171}
+    .pstatus.solved{background:rgba(74,222,128,.1);color:#4ade80}
+
+    .pdesc{font-size:10px;color:#667799;margin-bottom:6px;line-height:1.4}
+
+    /* Sliders */
+    .ctl{display:flex;align-items:center;gap:6px;margin:4px 0}
+    .ctl label{font-size:10px;color:#667799;min-width:28px;font-family:'Courier New',monospace;font-weight:600}
+    .ctl .v{font-size:13px;font-weight:700;color:#a8c0ff;min-width:22px;text-align:right;font-variant-numeric:tabular-nums;font-family:monospace}
+    .ctl .v.ok{color:#4ade80}
+    input[type="range"]{-webkit-appearance:none;flex:1;min-width:40px;height:4px;border-radius:2px;background:linear-gradient(90deg,rgba(100,140,255,.15),rgba(100,140,255,.25));outline:none;cursor:pointer}
+    input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#6488ff;cursor:pointer;box-shadow:0 0 6px rgba(100,136,255,.3);border:none;transition:box-shadow .2s}
+    input[type="range"]::-webkit-slider-thumb:hover{box-shadow:0 0 10px rgba(100,136,255,.5)}
+    input[type="range"]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#6488ff;cursor:pointer;border:none}
+    input[type="range"]:disabled{opacity:.4}
+    input[type="range"]:disabled::-webkit-slider-thumb{background:#445;box-shadow:none;cursor:default}
+
+    /* Toggle buttons */
+    .tog{padding:3px 12px;border-radius:4px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#667799;font-size:11px;cursor:pointer;font-weight:600;transition:all .12s;touch-action:manipulation}
+    .tog.on{background:rgba(100,140,255,.15);color:#6488ff;border-color:rgba(100,140,255,.25);box-shadow:0 0 8px rgba(100,140,255,.08)}
+
+    /* Computed display */
+    .cbox{background:rgba(0,0,0,.2);border-radius:5px;padding:5px 7px;margin:5px 0;border:1px solid rgba(100,140,255,.05)}
+    .cbox .ch{font-size:9px;color:#445;margin-bottom:3px;font-weight:600;display:flex;align-items:center;gap:4px}
+    .crow{display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:10px;border-bottom:1px solid rgba(255,255,255,.02);gap:4px}
+    .crow:last-child{border-bottom:none}
+    .crow .cn{color:#556;font-family:'Courier New',monospace;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .crow .cv{font-weight:700;color:#6488ff;transition:all .15s;white-space:nowrap;font-size:11px;font-family:monospace}
+    .crow .cv.ok{color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,.15)}
+    .crow .cv.bad{color:#f87171}
+
+    /* Condition display */
+    .cond{display:flex;align-items:center;gap:5px;margin:4px 0;padding:4px 6px;border-radius:4px;border:1px solid rgba(100,140,255,.05);font-size:10px}
+    .cond .cc{font-size:13px}
+    .cond .ct{color:#667799}
+
+    /* Watch log */
+    .wlog{margin-top:4px}
+    .wlog .wh{font-size:9px;color:#445;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+    .went{padding:2px 7px;margin:2px 0;border-radius:3px;font-size:9px;background:rgba(100,140,255,.03);border-left:2px solid #6488ff;animation:slIn .25s ease;line-height:1.5;font-family:'Courier New',monospace;color:#667799}
+    .went.ok{border-left-color:#4ade80;background:rgba(74,222,128,.05);color:#88ccaa}
+    .went.win{border-left-color:#fbbf24;background:rgba(251,191,36,.06);color:#fbbf24}
+    @keyframes slIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+
+    /* Chain node pulse animation */
+    @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 rgba(100,140,255,0)}50%{box-shadow:0 0 6px rgba(100,140,255,.15)}}
+    .chain-pulse{animation:pulseGlow 1.2s ease-in-out infinite}
+    /* Computed setter highlight */
+    .ctl .v.set{color:#fbbf24;text-shadow:0 0 6px rgba(251,191,36,.1)}
+
+    /* Gate status bar */
+    .gbar{display:flex;gap:6px;justify-content:center;margin:6px 0 2px}
+    .gbar .gs{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid #334;background:rgba(255,255,255,.02);color:#334;transition:all .4s}
+    .gbar .gs.open{border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.1);color:#4ade80;box-shadow:0 0 8px rgba(74,222,128,.1)}
+
+    /* ===== Win Overlay ===== */
+    .win{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:100;animation:fadeIn .5s}
+    .win-b{background:linear-gradient(135deg,#12122a,#1a1a3a);border:2px solid #fbbf24;border-radius:14px;padding:28px 36px;text-align:center;max-width:92%;box-shadow:0 0 60px rgba(251,191,36,.08)}
+    .win-b h2{font-size:28px;background:linear-gradient(90deg,#fbbf24,#f59e0b,#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:4px}
+    .win-b p{color:#8899cc;font-size:13px;margin-bottom:10px;line-height:1.6}
+    .win-grid{display:flex;gap:20px;justify-content:center;margin:12px 0}
+    .win-grid .ws{text-align:center}
+    .win-grid .wn{font-size:24px;font-weight:700;color:#6488ff}
+    .win-grid .wl{font-size:9px;color:#556}
+    button.primary{padding:10px 28px;border:none;border-radius:7px;background:linear-gradient(135deg,#6488ff,#a855f7);color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:transform .12s;touch-action:manipulation}
+    button.primary:active{transform:scale(.96)}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+    /* ===== Responsive ===== */
+    @media(max-width:700px){.ppanel{width:260px;min-width:260px}}
+    @media(max-width:540px){
+      .gmain{flex-direction:column}
+      .ppanel{width:100%;min-width:0;border-left:none;border-top:1px solid rgba(100,140,255,.08);max-height:42vh;flex-shrink:0}
+      .ppbody{max-height:calc(42vh - 34px)}
+      .gtitle{font-size:13px}
+      .ginfo{font-size:10px;gap:6px}
+      .mwrap .prox-hint{display:none}
+    }
+    @media(max-width:400px){.pcard{padding:6px}.ctl label{min-width:20px;font-size:9px}}
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div class="ghead">
+    <div class="gtitle">◈ 响应式迷宫</div>
+    <div class="ginfo">
+      <span>👣 <b>{{steps}}</b></span>
+      <span>
+        <span v-for="i in 3" :key="i" class="gdot" :class="{on:gateSolved[i-1]}"></span>
+      </span>
+      <span style="color:#8899cc">{{roomLabel}}</span>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="gmain">
+    <!-- Maze Canvas -->
+    <div class="mwrap" ref="mazeWrap">
+      <canvas id="mc" ref="canvasRef"></canvas>
+      <div class="prox-hint">{{proxHint}}</div>
+      <div class="dpad">
+        <button class="d-up"   @touchstart.prevent="movePlayer(0,-1)" @click="movePlayer(0,-1)">▲</button>
+        <button class="d-dn"   @touchstart.prevent="movePlayer(0,1)"  @click="movePlayer(0,1)">▼</button>
+        <button class="d-lt"   @touchstart.prevent="movePlayer(-1,0)" @click="movePlayer(-1,0)">◀</button>
+        <button class="d-rt"   @touchstart.prevent="movePlayer(1,0)"  @click="movePlayer(1,0)">▶</button>
+        <div class="d-mid">●</div>
+      </div>
+    </div>
+
+    <!-- Puzzle Panel -->
+    <div class="ppanel">
+      <div class="pphead">
+        ⚙ 响应式控制台
+        <span class="pppulse">脉冲 #{{pulseCount}}</span>
+      </div>
+      <div class="ppbody">
+
+        <!-- Gate status bar (always visible) -->
+        <div class="gbar">
+          <div v-for="(gp,i) in gatePositions" :key="i" class="gs" :class="{open:gateSolved[i]}">
+            {{gateSolved[i]?'✓':i+1}}
+          </div>
+        </div>
+
+        <!-- Reactive Chain Visualization -->
+        <div class="cbox" v-if="activeChain" style="margin-bottom:8px">
+          <div class="ch">🔗 响应式链 · {{activeChain.label}}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:3px;align-items:center;padding:4px 0;font-size:10px;font-family:monospace">
+            <template v-for="(dep, i) in activeChain.deps" :key="i">
+              <span style="padding:2px 5px;border-radius:3px;background:rgba(100,140,255,.08);color:#6488ff">[{{dep.from}}]</span>
+              <span style="color:#445;font-size:9px">→</span>
+              <span style="padding:2px 5px;border-radius:3px;background:rgba(100,140,255,.08);color:#a8c0ff">[{{dep.to}}]</span>
+              <span v-if="i<activeChain.deps.length-1" style="color:rgba(100,140,255,.1);font-size:8px">↘</span>
+            </template>
+          </div>
+        </div>
+
+        <!-- ===== Puzzle 1: 砝码之门 (Weight Gate) ===== -->
+        <div class="pcard" :class="{solved:p1solved, active:activePuzzle===0}">
+          <div class="phead">
+            <span class="pname">⚖️ 谜题一 · 砝码之门</span>
+            <span class="pstatus" :class="p1solved?'solved':'locked'">{{p1solved?'✅ 开启':'🔒 锁定'}}</span>
+          </div>
+          <div class="pdesc">调整左右砝码重量,触发 computed 推导差值. watch 侦测到平衡即开门!</div>
+          <div class="ctl">
+            <label>left</label>
+            <input type="range" min="0" max="10" v-model.number="wL" :disabled="p1solved">
+            <span class="v" :class="{ok:p1solved}">{{wL}}</span>
+          </div>
+          <div class="ctl">
+            <label>right</label>
+            <input type="range" min="0" max="10" v-model.number="wR" :disabled="p1solved">
+            <span class="v" :class="{ok:p1solved}">{{wR}}</span>
+          </div>
+          <div class="cbox">
+            <div class="ch">⚡ computed</div>
+            <div class="crow"><span class="cn">diff = |left − right|</span><span :class="['cv',p1solved||wDiff<=1?'ok':'']">{{wDiff}}</span></div>
+            <div class="crow"><span class="cn">sum  = left + right</span><span :class="['cv',p1solved||wSum>12?'ok':'']">{{wSum}}</span></div>
+          </div>
+          <!-- Computed Setter Demo -->
+          <div style="margin:4px 0;padding-top:6px;border-top:1px solid rgba(100,140,255,.06);font-size:9px;color:#556;margin-bottom:2px">↻ computed setter (set目标自动分配):</div>
+          <div class="ctl">
+            <label>🎯目标</label>
+            <input type="range" min="4" max="20" v-model.number="weightTarget" :disabled="p1solved">
+            <span class="v" :class="{ok:p1solved}">{{weightTarget}}</span>
+          </div>
+          <div class="cbox">
+            <div class="ch">⚡ computed get/set</div>
+            <div class="crow"><span class="cn">weightTarget (setter) ⟹ wL / wR</span><span :class="['cv',p1solved?'ok':'']">{{wL}} / {{wR}}</span></div>
+          </div>
+          <div class="cond">
+            <span class="cc">{{p1solved?'✅':'❌'}}</span>
+            <span class="ct">|left−right| ≤ 1 且 left+right > 12</span>
+          </div>
+          <div class="wlog" v-if="log1.length">
+            <div class="wh">📡 watch</div>
+            <div v-for="(e,i) in log1" :key="i" :class="['went',e.t]">{{e.m}}</div>
+          </div>
+        </div>
+
+        <!-- ===== Puzzle 2: 密码转盘 (Combination Lock) ===== -->
+        <div class="pcard" :class="{solved:p2solved, active:activePuzzle===1}">
+          <div class="phead">
+            <span class="pname">🔐 谜题二 · 密码转盘</span>
+            <span class="pstatus" :class="p2solved?'solved':'locked'">{{p2solved?'✅ 开启':'🔒 锁定'}}</span>
+          </div>
+          <div class="pdesc">拨动三个转盘, computed 拼出三位密码. watch 逐位校验并给提示!</div>
+          <div style="display:flex;gap:10px;justify-content:center;margin:6px 0">
+            <div v-for="i in 3" :key="i" style="text-align:center">
+              <button class="tog" @click="!p2solved&&spin(i-1,-1)">−</button>
+              <div style="font-size:22px;font-weight:700;font-family:monospace;color:#fff;margin:3px 0">{{dials[i-1]}}</div>
+              <button class="tog" @click="!p2solved&&spin(i-1,1)">+</button>
+              <div style="font-size:8px;color:#445;margin-top:2px">盘{{i}}</div>
+            </div>
+          </div>
+          <div class="cbox">
+            <div class="ch">⚡ computed (级联)</div>
+            <div class="crow"><span class="cn">code = 盘₁·100 + 盘₂·10 + 盘₃</span><span :class="['cv',p2solved?'ok':'']">{{combo}}</span></div>
+            <div class="crow"><span class="cn">digitMatch = 逐位匹配</span><span :class="['cv',digitMatch===3?'ok':'']">{{digitMatch}}/3</span></div>
+            <div class="crow"><span class="cn">proximity (→2级)</span><span :class="['cv',digitMatch===3?'ok':'']">{{proximity}}</span></div>
+            <div class="crow"><span class="cn">cascadeScore (→3级)</span><span :class="['cv',digitMatch===3?'ok':'']">{{cascadeScore}}</span></div>
+          </div>
+          <div class="cond">
+            <span class="cc">{{p2solved?'✅':'❌'}}</span>
+            <span class="ct">拨到正确三位密码</span>
+          </div>
+          <div class="wlog" v-if="log2.length">
+            <div class="wh">📡 watch</div>
+            <div v-for="(e,i) in log2" :key="i" :class="['went',e.t]">{{e.m}}</div>
+          </div>
+        </div>
+
+        <!-- ===== Puzzle 3: 能量阵列 (Energy Array) ===== -->
+        <div class="pcard" :class="{solved:p3solved, active:activePuzzle===2}">
+          <div class="phead">
+            <span class="pname">⚡ 谜题三 · 能量阵列</span>
+            <span class="pstatus" :class="p3solved?'solved':'locked'">{{p3solved?'✅ 开启':'🔒 锁定'}}</span>
+          </div>
+          <div class="pdesc">调配三种能源, computed 计算总量和稳定性. watch 在条件满足时开门!</div>
+          <div class="ctl">
+            <label>☀ solar</label>
+            <input type="range" min="0" max="10" v-model.number="solar" :disabled="p3solved">
+            <span class="v" :class="{ok:p3solved}">{{solar}}</span>
+          </div>
+          <div class="ctl">
+            <label>💨 wind</label>
+            <input type="range" min="0" max="10" v-model.number="wind" :disabled="p3solved">
+            <span class="v" :class="{ok:p3solved}">{{wind}}</span>
+          </div>
+          <div class="ctl">
+            <label>🌊 hydro</label>
+            <input type="range" min="0" max="10" v-model.number="hydro" :disabled="p3solved">
+            <span class="v" :class="{ok:p3solved}">{{hydro}}</span>
+          </div>
+          <div class="cbox">
+            <div class="ch">⚡ computed</div>
+            <div class="crow"><span class="cn">total = solar+wind+hydro</span><span :class="['cv',p3solved||eTotal>15?'ok':'']">{{eTotal}}</span></div>
+            <div class="crow"><span class="cn">stable = solar>3 ∧ wind>2 ∧ hydro>4</span><span :class="['cv',p3solved||eStable?'ok':'']">{{eStable?'true':'false'}}</span></div>
+          </div>
+          <div class="cond">
+            <span class="cc">{{p3solved?'✅':'❌'}}</span>
+            <span class="ct">总能量 > 15 且 各能源稳定</span>
+          </div>
+          <div class="wlog" v-if="log3.length">
+            <div class="wh">📡 watch</div>
+            <div v-for="(e,i) in log3" :key="i" :class="['went',e.t]">{{e.m}}</div>
+          </div>
+          <div class="wlog" v-if="effectLog.length">
+            <div class="wh">🌀 watchEffect (自动追踪)</div>
+            <div v-for="(e,i) in effectLog" :key="i" :class="['went',e.t]">{{e.m}}</div>
+          </div>
+        </div>
+
+        <!-- Global event log -->
+        <div class="wlog" v-if="globalLog.length">
+          <div class="wh">🌐 全局</div>
+          <div v-for="(e,i) in globalLog" :key="i" :class="['went',e.t]">{{e.m}}</div>
+        </div>
+        <div style="height:8px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Win Overlay -->
+  <div v-if="won" class="win">
+    <div class="win-b">
+      <h2>🏆 迷宫逃脱!</h2>
+      <p>你通过调整 Vue3 响应式数据,触发 computed 推导和 watch 侦听,<br>成功解开所有机关,逃离了响应式迷宫!</p>
+      <div class="win-grid">
+        <div class="ws"><div class="wn">{{steps}}</div><div class="wl">移动步数</div></div>
+        <div class="ws"><div class="wn">{{pulseCount}}</div><div class="wl">响应脉冲</div></div>
+      </div>
+      <button class="primary" @click="restartGame">🔄 再来一次</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const { ref, reactive, computed, watch, watchEffect, onMounted, nextTick } = Vue;
+
+/* =================================================================
+   Maze Generation (Recursive Backtracking)
+   ================================================================= */
+function genMaze(n) {
+  const g = Array.from({length:n},()=>Array(n).fill(1));
+  const visit=(x,y)=>{
+    g[y][x]=0;
+    const d=[[0,-2],[2,0],[0,2],[-2,0]];
+    for(let i=d.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[d[i],d[j]]=[d[j],d[i]]}
+    for(const [dx,dy] of d){
+      const nx=x+dx, ny=y+dy;
+      if(nx>=0&&nx<n&&ny>=0&&ny<n&&g[ny][nx]===1){
+        g[y+dy/2][x+dx/2]=0;
+        visit(nx,ny);
+      }
+    }
+  };
+  visit(1,1);
+  return g;
+}
+
+function findPath(g,sx,sy,ex,ey){
+  const n=g.length,vis=Array.from({length:n},()=>Array(n).fill(0));
+  const q=[{x:sx,y:sy,p:[{x:sx,y:sy}]}]; vis[sy][sx]=1;
+  const d=[[0,-1],[1,0],[0,1],[-1,0]];
+  while(q.length){
+    const {x,y,p}=q.shift();
+    if(x===ex&&y===ey) return p;
+    for(const [dx,dy] of d){
+      const nx=x+dx,ny=y+dy;
+      if(nx>=0&&nx<n&&ny>=0&&ny<n&&!vis[ny][nx]&&g[ny][nx]===0){
+        vis[ny][nx]=1;
+        q.push({x:nx,y:ny,p:[...p,{x:nx,y:ny}]});
+      }
+    }
+  }
+  return null;
+}
+
+function placeGates(path,count){
+  if(path.length<count+2) return [];
+  const step=Math.floor(path.length/(count+1));
+  return Array.from({length:count},(_,i)=>({...path[(i+1)*step]}));
+}
+
+/* =================================================================
+   Vue App
+   ================================================================= */
+const app = Vue.createApp({
+  setup(){
+    const canvasRef=ref(null);
+    const N=15; // maze size (odd)
+    const SX=1, SY=1, EX=N-2, EY=N-2;
+
+    // ── Reactive game state ──
+    const maze=ref([]);
+    const gatePositions=ref([]);
+    const gateSolved=reactive([false,false,false]);
+    const px=ref(SX), py=ref(SY);
+    const steps=ref(0);
+    const won=ref(false);
+    const activePuzzle=ref(-1);
+    const pulseCount=ref(0);
+    const globalLog=reactive([]);
+
+    // ── Puzzle 1: Weight Gate ──
+    const wL=ref(5), wR=ref(5);
+    const wDiff=computed(()=>Math.abs(wL.value-wR.value));
+    const wSum=computed(()=>wL.value+wR.value);
+    const p1solved=computed(()=>wDiff.value<=1&&wSum.value>12);
+    const log1=reactive([]);
+
+    // ── Puzzle 2: Combination Lock ──
+    const dials=reactive([0,0,0]);
+    const TARGET=483;
+    const combo=computed(()=>dials[0]*100+dials[1]*10+dials[2]);
+    const p2solved=computed(()=>combo.value===TARGET);
+    const log2=reactive([]);
+
+    function spin(i,d){dials[i]=(dials[i]+d+10)%10;}
+
+    // ── Puzzle 3: Energy Array ──
+    const solar=ref(3), wind=ref(3), hydro=ref(3);
+    const eTotal=computed(()=>solar.value+wind.value+hydro.value);
+    const eStable=computed(()=>solar.value>3&&wind.value>2&&hydro.value>4);
+    const p3solved=computed(()=>eTotal.value>15&&eStable.value);
+    const log3=reactive([]);
+
+    // ── Computed Setter (Puzzle 1: writable computed) ──
+    const weightTarget=computed({
+      get:()=>wL.value+wR.value,
+      set:(val)=>{
+        const v=Math.max(4,Math.min(20,val|0));
+        const half=Math.floor(v/2);
+        wL.value=v%2===0?half:half+1;
+        wR.value=half;
+      }
+    });
+
+    // ── Cascading Computed (Puzzle 2: 3-level chain) ──
+    const digitMatch=computed(()=>{
+      const t=String(TARGET),c=String(combo.value).padStart(3,'0');
+      return [...Array(3)].reduce((m,_,i)=>m+(c[i]===t[i]?1:0),0);
+    });
+    const proximity=computed(()=>{
+      const d=Math.abs(combo.value-TARGET);
+      return d===0?'🎯 完全匹配!':d<50?'🔥 非常接近':d<200?'⚡ 有点感觉':'❄️ 相差甚远';
+    });
+    const cascadeScore=computed(()=>digitMatch.value*100+(combo.value===TARGET?999:0));
+
+    // ── watchEffect (Puzzle 3: auto-tracking) ──
+    const energySig=ref('');
+    const effectLog=reactive([]);
+    watchEffect(()=>{
+      const sig=`${solar.value}:${wind.value}:${hydro.value}`;
+      if(energySig.value!==sig){
+        energySig.value=sig;
+        const ok=eTotal.value>15&&eStable.value;
+        effectLog.unshift({m:`🌀 [watchEffect] ${sig} → total=${eTotal.value} stable=${eStable.value}`,t:ok?'win':''});
+        if(effectLog.length>4) effectLog.pop();
+      }
+    });
+
+    // ── Reactive Chain Visualization ──
+    const activeChain=computed(()=>{
+      const map=[
+        {label:'⚖️ 砝码之门',deps:[
+          {from:'wL / wR',to:'wDiff + wSum'},{from:'wDiff / wSum',to:'p1solved (computed)'},
+          {from:'weightTarget',to:'wL / wR (computed setter)'},{from:'p1solved',to:'gate[0] (watch)'},
+        ]},
+        {label:'🔐 转盘之门',deps:[
+          {from:'dials[0..2]',to:'combo (computed)'},{from:'combo',to:'digitMatch (computed)'},
+          {from:'digitMatch',to:'cascadeScore (3级链)'},{from:'combo',to:'p2solved (computed)'},
+          {from:'p2solved',to:'gate[1] (watch)'},
+        ]},
+        {label:'⚡ 能量之门',deps:[
+          {from:'solar/wind/hydro',to:'eTotal (computed)'},{from:'eTotal + eStable',to:'p3solved (computed)'},
+          {from:'* 自动追踪',to:'watchEffect'},{from:'p3solved',to:'gate[2] (watch)'},
+        ]},
+      ];
+      return map[activePuzzle.value]??null;
+    });
+
+    // ── Derived ──
+    const solvedCount=computed(()=>[p1solved.value,p2solved.value,p3solved.value].filter(Boolean).length);
+    const roomLabel=computed(()=>{
+      const s=solvedCount.value;
+      if(s===0) return '入口区';
+      if(s===1) return '迷宫腹地';
+      if(s===2) return '深处';
+      return '🏁 出口区';
+    });
+    const proxHint=computed(()=>{
+      for(let i=0;i<gatePositions.value.length;i++){
+        if(gateSolved[i]) continue;
+        const g=gatePositions.value[i];
+        if(Math.abs(px.value-g.x)+Math.abs(py.value-g.y)<=2)
+          return `💡 谜题${i+1} — 调整右侧数据开门`;
+      }
+      if(solvedCount.value<3) return '探索迷宫,靠近红色机关触发谜题';
+      if(px.value===EX&&py.value===EY) return '🎉 到达出口!';
+      return '所有谜题已解,前往出口!';
+    });
+
+    // ── Watchers ──
+
+    // Puzzle 1
+    watch(wDiff,(v,o)=>{
+      log1.unshift({m:`watch(diff): ${o} → ${v}`,t:''});
+      if(log1.length>5) log1.pop();
+      if(v>0&&v<=2){
+        log1.unshift({m:'⚡ "砝码很接近平衡了!"',t:''});
+        if(log1.length>5) log1.pop();
+      }
+    });
+    watch(p1solved,(v)=>{
+      if(v){
+        gateSolved[0]=true;
+        log1.unshift({m:'🎉 砝码之门开启! (computed→watch)',t:'win'});
+        pulseCount.value++;
+        globalLog.unshift({m:`响应脉冲 #${pulseCount.value}: 谜题1破解`,t:'ok'});
+        if(log1.length>5) log1.pop();
+      }
+    });
+
+    // Puzzle 2
+    watch(combo,(v,o)=>{
+      log2.unshift({m:`watch(code): ${o} → ${v}`,t:''});
+      if(log2.length>5) log2.pop();
+      const [t0,t1,t2]=[Math.floor(TARGET/100),Math.floor((TARGET%100)/10),TARGET%10];
+      const [d0,d1,d2]=dials;
+      if(v===TARGET){
+        log2.unshift({m:'🎉 密码正确! 转盘之门开启! (computed→watch)',t:'win'});
+        if(log2.length>5) log2.pop();
+      }else if(d0===t0&&d1!==t1) log2.unshift({m:'💡 watch: "第二位不对..."',t:''});
+      else if(d0===t0&&d1===t1&&d2!==t2) log2.unshift({m:'💡 watch: "最后一位还差一点!"',t:''});
+      else if(d0===t0||d1===t1||d2===t2) log2.unshift({m:'💡 watch: "有位数字正确"',t:''});
+      if(log2.length>5) log2.pop();
+    });
+    watch(p2solved,(v)=>{
+      if(v){
+        gateSolved[1]=true;
+        pulseCount.value++;
+        globalLog.unshift({m:`响应脉冲 #${pulseCount.value}: 谜题2破解`,t:'ok'});
+      }
+    });
+
+    // Puzzle 3
+    watch(eTotal,(v,o)=>{
+      log3.unshift({m:`watch(total): ${o} → ${v}`,t:''});
+      if(log3.length>5) log3.pop();
+      if(v>12&&v<=15){
+        log3.unshift({m:'⚡ "能量接近阈值!"',t:''});
+        if(log3.length>5) log3.pop();
+      }
+    });
+    watch(eStable,(v)=>{
+      if(!v){
+        log3.unshift({m:'⚡ watch(stable): 需要 solar>3, wind>2, hydro>4',t:''});
+        if(log3.length>5) log3.pop();
+      }
+    });
+    watch(p3solved,(v)=>{
+      if(v){
+        gateSolved[2]=true;
+        log3.unshift({m:'🎉 能量稳定! 能量之门开启! (computed→watch)',t:'win'});
+        pulseCount.value++;
+        globalLog.unshift({m:`响应脉冲 #${pulseCount.value}: 谜题3破解`,t:'ok'});
+        if(log3.length>5) log3.pop();
+      }
+    });
+
+    // ── Game Init ──
+    function initGame(){
+      const g=genMaze(N);
+      g[SY][SX]=0; g[EY][EX]=0;
+      const path=findPath(g,SX,SY,EX,EY);
+      const gates=placeGates(path,3);
+      for(const gt of gates) if(g[gt.y][gt.x]===0) g[gt.y][gt.x]=2;
+      maze.value=g;
+      gatePositions.value=gates;
+      px.value=SX; py.value=SY;
+      steps.value=0; won.value=false; activePuzzle.value=-1;
+      gateSolved[0]=gateSolved[1]=gateSolved[2]=false;
+      // Reset puzzles
+      wL.value=5; wR.value=5; log1.splice(0);
+      dials[0]=dials[1]=dials[2]=0; log2.splice(0);
+      solar.value=3; wind.value=3; hydro.value=3; log3.splice(0);
+      effectLog.splice(0); energySig.value='';
+      globalLog.splice(0); pulseCount.value=0;
+      globalLog.push({m:'🔧 迷宫生成 · 寻找出口中...',t:''});
+    }
+
+    // ── Player Movement ──
+    function movePlayer(dx,dy){
+      if(won.value) return;
+      const nx=px.value+dx, ny=py.value+dy;
+      if(nx<0||nx>=N||ny<0||ny>=N) return;
+      const cell=maze.value[ny]?.[nx];
+      if(cell===1) return;
+      if(cell===2){
+        const gi=gatePositions.value.findIndex(g=>g.x===nx&&g.y===ny);
+        if(gi>=0){activePuzzle.value=gi; if(!gateSolved[gi]) return;}
+      }
+      px.value=nx; py.value=ny; steps.value++;
+      if(cell===2){
+        const gi=gatePositions.value.findIndex(g=>g.x===nx&&g.y===ny);
+        if(gi>=0&&gateSolved[gi]) maze.value[ny][nx]=3;
+      }
+      // Auto-detect nearby puzzle
+      let near=-1;
+      for(let i=0;i<gatePositions.value.length;i++){
+        if(gateSolved[i]) continue;
+        const g=gatePositions.value[i];
+        if(Math.abs(nx-g.x)+Math.abs(ny-g.y)<=2){near=i; break;}
+      }
+      if(near>=0) activePuzzle.value=near;
+      if(nx===EX&&ny===EY&&solvedCount.value===3) won.value=true;
+    }
+
+    // ── Keyboard ──
+    function onKey(e){
+      const map={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],
+                 w:[0,-1],s:[0,1],a:[-1,0],d:[1,0],W:[0,-1],S:[0,1],A:[-1,0],D:[1,0]};
+      const dir=map[e.key];
+      if(dir){e.preventDefault();movePlayer(dir[0],dir[1]);}
+    }
+
+    // ── Touch swipe ──
+    let tx=0,ty=0;
+    function onTS(e){const t=e.touches[0];tx=t.clientX;ty=t.clientY}
+    function onTE(e){
+      const t=e.changedTouches[0]; if(!t) return;
+      const dx=t.clientX-tx, dy=t.clientY-ty;
+      if(Math.abs(dx)<25&&Math.abs(dy)<25) return;
+      if(Math.abs(dx)>Math.abs(dy)) movePlayer(dx>0?1:-1,0);
+      else movePlayer(dy>0?1:-1,0);
+    }
+
+    // ── Canvas Rendering ──
+    function render(){
+      const cvs=canvasRef.value; if(!cvs) return;
+      const ctx=cvs.getContext('2d');
+      const grid=maze.value; if(!grid||!grid.length) return;
+      const cont=cvs.parentElement;
+      const cw=cont.clientWidth-8, ch=cont.clientHeight-8;
+      const cs=Math.max(8,Math.floor(Math.min(cw,ch)/N));
+      const sz=cs*N, ox=Math.floor((cw-sz)/2), oy=Math.floor((ch-sz)/2);
+      cvs.width=cw; cvs.height=ch;
+      cvs.style.width=cw+'px'; cvs.style.height=ch+'px';
+
+      // Background
+      ctx.fillStyle='#0a0a1a'; ctx.fillRect(0,0,cw,ch);
+
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+        const cell=grid[y]?.[x]??1;
+        const px_=ox+x*cs, py_=oy+y*cs;
+        if(cell===1){ // wall
+          ctx.fillStyle='#14143a';
+          ctx.fillRect(px_,py_,cs,cs);
+          ctx.fillStyle='rgba(20,20,60,.3)';
+          ctx.fillRect(px_+1,py_+1,cs-2,1);
+        }else if(cell===2){ // closed gate
+          ctx.fillStyle='rgba(239,68,68,.12)';
+          ctx.fillRect(px_,py_,cs,cs);
+          ctx.fillStyle='#ef4444';
+          const bw=Math.max(2,cs*.1), gap=cs*.22, pad=cs*.14;
+          for(let b=0;b<3;b++) ctx.fillRect(px_+pad+b*(bw+gap),py_+2,bw,cs-4);
+          if(cs>14){
+            ctx.font=cs*.4+'px sans-serif';
+            ctx.textAlign='center'; ctx.textBaseline='middle';
+            ctx.fillText('🔒',px_+cs/2,py_+cs/2);
+          }
+        }else if(cell===3){ // open gate
+          ctx.fillStyle='rgba(74,222,128,.08)';
+          ctx.fillRect(px_,py_,cs,cs);
+          ctx.fillStyle='rgba(74,222,128,.2)';
+          const bw=Math.max(2,cs*.05), gap=cs*.18, pad=cs*.14;
+          for(let b=0;b<3;b++) ctx.fillRect(px_+pad+b*(bw+gap),py_+2,bw,cs-4);
+        }else{ // path
+          ctx.fillStyle='#0d0d26';
+          ctx.fillRect(px_,py_,cs,cs);
+          if(cs>8){
+            ctx.fillStyle='rgba(40,40,80,.2)';
+            ctx.beginPath(); ctx.arc(px_+cs/2,py_+cs/2,1.2,0,Math.PI*2); ctx.fill();
+          }
+        }
+        // Exit
+        if(x===EX&&y===EY){
+          const grd=ctx.createRadialGradient(px_+cs/2,py_+cs/2,0,px_+cs/2,py_+cs/2,cs*.7);
+          grd.addColorStop(0,`rgba(74,222,128,${solvedCount.value===3 ? .15 : .08})`);
+          grd.addColorStop(1,'rgba(74,222,128,0)');
+          ctx.fillStyle=grd;
+          ctx.fillRect(px_-cs*.5,py_-cs*.5,cs*2,cs*2);
+          if(cs>12){
+            ctx.font=cs*.45+'px sans-serif';
+            ctx.textAlign='center'; ctx.textBaseline='middle';
+            ctx.fillStyle=solvedCount.value===3?'#4ade80':'rgba(74,222,128,.3)';
+            ctx.fillText(solvedCount.value===3?'🚪':'★',px_+cs/2,py_+cs/2);
+          }
+        }
+      }
+
+      // Gate labels
+      for(let i=0;i<gatePositions.value.length;i++){
+        const g=gatePositions.value[i]; if(!g) continue;
+        const gx=ox+g.x*cs, gy=oy+g.y*cs;
+        ctx.fillStyle=gateSolved[i]?'rgba(74,222,128,.5)':'rgba(239,68,68,.5)';
+        ctx.font='bold '+(cs*.28)+'px sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='bottom';
+        if(cs>14) ctx.fillText('＃'+(i+1),gx+cs/2,gy-2);
+      }
+
+      // Player
+      const ppx=ox+px.value*cs+cs/2, ppy=oy+py.value*cs+cs/2;
+      const ps=cs*.65;
+      // Glow
+      const gl=ctx.createRadialGradient(ppx,ppy,0,ppx,ppy,ps);
+      gl.addColorStop(0,'rgba(100,136,255,.25)');
+      gl.addColorStop(1,'rgba(100,136,255,0)');
+      ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(ppx,ppy,ps,0,Math.PI*2); ctx.fill();
+      // Body
+      ctx.fillStyle='#6488ff';
+      ctx.beginPath(); ctx.arc(ppx,ppy,ps*.4,0,Math.PI*2); ctx.fill();
+      // Highlight
+      ctx.fillStyle='rgba(255,255,255,.2)';
+      ctx.beginPath(); ctx.arc(ppx-ps*.1,ppy-ps*.1,ps*.13,0,Math.PI*2); ctx.fill();
+      // Eyes
+      const eo=ps*.14; ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(ppx-eo,ppy-eo*.4,ps*.07,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(ppx+eo,ppy-eo*.4,ps*.07,0,Math.PI*2); ctx.fill();
+
+      // Subtle path hint for first steps
+      if(steps.value<4&&cs>10){
+        const path=findPath(grid,SX,SY,EX,EY);
+        if(path){
+          ctx.strokeStyle='rgba(100,136,255,.05)';
+          ctx.lineWidth=1; ctx.setLineDash([3,5]);
+          ctx.beginPath();
+          const lim=Math.min(10,path.length);
+          for(let i=0;i<lim;i++){
+            const sx=ox+path[i].x*cs+cs/2, sy=oy+path[i].y*cs+cs/2;
+            i===0?ctx.moveTo(sx,sy):ctx.lineTo(sx,sy);
+          }
+          ctx.stroke(); ctx.setLineDash([]);
+        }
+      }
+    }
+
+    // ── Reactive render trigger ──
+    watch([px,py,solvedCount,won,activePuzzle],()=>nextTick(render),{flush:'post'});
+    watch(maze,()=>nextTick(render),{deep:true,flush:'post'});
+
+    // ── Restart ──
+    function restartGame(){initGame();nextTick(render);}
+
+    // ── Lifecycle ──
+    onMounted(()=>{
+      initGame();
+      nextTick(render);
+      window.addEventListener('keydown',onKey);
+      const cvs=canvasRef.value;
+      if(cvs){
+        cvs.addEventListener('touchstart',onTS,{passive:true});
+        cvs.addEventListener('touchend',onTE,{passive:true});
+      }
+      // ResizeObserver for responsive canvas
+      const ro=new ResizeObserver(()=>render());
+      const w=(cvs?cvs.parentElement:null);
+      if(w) ro.observe(w);
+    });
+
+    return {
+      canvasRef, steps, won, gatePositions, gateSolved, activePuzzle,
+      roomLabel, proxHint, pulseCount, globalLog,
+
+      // Puzzle 1
+      wL, wR, wDiff, wSum, p1solved, log1,
+      // Puzzle 2
+      dials, combo, p2solved, log2, spin,
+      // Puzzle 3
+      solar, wind, hydro, eTotal, eStable, p3solved, log3,
+
+      // Enhanced reactivity demos
+      weightTarget,
+      digitMatch, proximity, cascadeScore,
+      effectLog, activeChain,
+
+      movePlayer, restartGame,
+    };
+  }
+});
+
+app.mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  背景是深色渐变，页面中央有一个金色标题'玄机算卦'，下面是副标题'输入您的信息，揭示命运奥秘'。页面中央有一个表单，可以输入姓氏、出生日期和时辰。表单下方有一个按钮，按钮文字是'立即算卦'，点击后会出现一个加载动画，随后会弹出一个窗口显示计算结果。弹窗顶部显示'您的卦象分析结果'，内部会展示具体的卦象符号、名称、五行属性和详细分析。页面的互动效果包括按钮的悬停动画和弹窗的打开关闭动画。
+-->
+<meta name="description" content="背景是深色渐变，页面中央有一个金色标题'玄机算卦'，下面是副标题'输入您的信息，揭示命运奥秘'。页面中央有一个表单，可以输入姓氏、出生日期和时辰。表单下方有一个按钮，按钮文字是'立即算卦'，点击后会出现一个加载动画，随后会弹出一个窗口显示计算结果。弹窗顶部显示'您的卦象分析结果'，内部会展示具体的卦象符号、名称、五行属性和详细分析。页面的互动效果包括按钮的悬停动画和弹窗的打开关闭动画。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>玄机算卦</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --gold: #d4a84b;
+    --gold-light: #f0d080;
+    --gold-dark: #b8862d;
+    --bg-start: #0a0a1a;
+    --bg-mid: #150b24;
+    --bg-end: #1a0a2e;
+    --card-bg: rgba(20, 12, 40, 0.85);
+    --card-border: rgba(212, 168, 75, 0.3);
+    --text-primary: #e8e0d0;
+    --text-secondary: #a09880;
+    --text-muted: #706050;
+    --shadow-gold: rgba(212, 168, 75, 0.15);
+    --font-cn: "STKaiti", "KaiTi", "楷体", "Noto Serif SC", serif;
+    --font-sans: "PingFang SC", "Microsoft YaHei", "微软雅黑", sans-serif;
+    --radius: 12px;
+    --radius-lg: 20px;
+  }
+
+  html { font-size: 16px; scroll-behavior: smooth; }
+  body {
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-mid) 40%, var(--bg-end) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    overflow-x: hidden;
+    padding: 20px;
+  }
+
+  /* ── Background particles ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(1px 1px at 10% 20%, rgba(212,168,75,0.15), transparent),
+      radial-gradient(1px 1px at 30% 70%, rgba(212,168,75,0.1), transparent),
+      radial-gradient(1.5px 1.5px at 50% 10%, rgba(212,168,75,0.12), transparent),
+      radial-gradient(1px 1px at 70% 40%, rgba(212,168,75,0.08), transparent),
+      radial-gradient(1.5px 1.5px at 85% 80%, rgba(212,168,75,0.13), transparent),
+      radial-gradient(1px 1px at 20% 90%, rgba(212,168,75,0.09), transparent),
+      radial-gradient(1px 1px at 90% 15%, rgba(212,168,75,0.11), transparent),
+      radial-gradient(1.5px 1.5px at 45% 50%, rgba(212,168,75,0.07), transparent);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Main Container ── */
+  .container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 480px;
+    padding: 30px 24px 40px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 60px rgba(0,0,0,0.5), 0 0 40px var(--shadow-gold);
+    text-align: center;
+  }
+
+  /* ── Decorative corner ornaments ── */
+  .container::before, .container::after {
+    content: '◆';
+    position: absolute;
+    font-size: 10px;
+    color: var(--gold);
+    opacity: 0.3;
+  }
+  .container::before { top: 12px; left: 16px; }
+  .container::after { bottom: 12px; right: 16px; }
+
+  /* ── Title ── */
+  .title {
+    font-family: var(--font-cn);
+    font-size: clamp(2rem, 8vw, 3rem);
+    font-weight: 700;
+    color: var(--gold);
+    text-shadow: 0 0 30px rgba(212,168,75,0.3), 0 0 60px rgba(212,168,75,0.1);
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+    position: relative;
+  }
+  .title::after {
+    content: '';
+    display: block;
+    width: 60px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    margin: 10px auto 0;
+  }
+
+  .subtitle {
+    font-size: clamp(0.8rem, 3vw, 0.95rem);
+    color: var(--text-secondary);
+    margin-top: 12px;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Form ── */
+  .form { margin-top: 28px; text-align: left; }
+  .form-group { margin-bottom: 18px; }
+  .form-group label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    letter-spacing: 0.05em;
+    padding-left: 2px;
+  }
+  .form-group label .star { color: var(--gold); margin-left: 2px; }
+
+  .form-input {
+    width: 100%;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(212,168,75,0.2);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-family: var(--font-sans);
+    outline: none;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    -webkit-appearance: none;
+  }
+  .form-input:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 12px rgba(212,168,75,0.15);
+  }
+  .form-input::placeholder { color: var(--text-muted); }
+  .form-input.error {
+    border-color: #c0392b;
+    box-shadow: 0 0 10px rgba(192,57,43,0.2);
+  }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  select.form-input {
+    cursor: pointer;
+  }
+  select.form-input option { background: #1a0a2e; color: #e8e0d0; }
+
+  .error-msg {
+    font-size: 0.75rem;
+    color: #c0392b;
+    margin-top: 4px;
+    padding-left: 4px;
+    display: none;
+  }
+  .error-msg.show { display: block; }
+
+  /* ── Button ── */
+  .btn-divine {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 12px;
+    width: 100%;
+    padding: 14px 28px;
+    background: linear-gradient(135deg, var(--gold-dark), var(--gold), var(--gold-light));
+    color: #1a0a2e;
+    font-size: 1.05rem;
+    font-weight: 700;
+    font-family: var(--font-cn);
+    letter-spacing: 0.15em;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: transform 0.25s, box-shadow 0.25s, filter 0.25s;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-divine::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, var(--gold-light), var(--gold), var(--gold-dark));
+    opacity: 0;
+    transition: opacity 0.35s;
+  }
+  .btn-divine:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 30px rgba(212,168,75,0.35);
+  }
+  .btn-divine:hover::before { opacity: 1; }
+  .btn-divine:active {
+    transform: translateY(0) scale(0.98);
+  }
+  .btn-divine span { position: relative; z-index: 1; }
+  .btn-divine:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  /* ── Loading Overlay ── */
+  .loading-overlay {
+    position: fixed; inset: 0;
+    z-index: 1000;
+    background: rgba(5,3,15,0.85);
+    backdrop-filter: blur(8px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .loading-overlay.active {
+    display: flex;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* ── Taiji Spinner ── */
+  .taiji {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(var(--gold-dark) 50%, #1a0a2e 50%);
+    position: relative;
+    animation: spin 1.8s linear infinite;
+    box-shadow: 0 0 60px rgba(212,168,75,0.2);
+  }
+  .taiji::before, .taiji::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+  }
+  .taiji::before {
+    width: 40px; height: 40px;
+    background: var(--gold-dark);
+    top: 20px; left: 0;
+    box-shadow: inset 0 0 0 10px #1a0a2e;
+  }
+  .taiji::after {
+    width: 40px; height: 40px;
+    background: #1a0a2e;
+    top: 20px; right: 0;
+    box-shadow: inset 0 0 0 10px var(--gold-dark);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text {
+    font-family: var(--font-cn);
+    color: var(--gold);
+    font-size: 1.1rem;
+    letter-spacing: 0.15em;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  /* ── Modal ── */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    z-index: 2000;
+    background: rgba(5,3,15,0.7);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.active { display: flex; }
+
+  .modal {
+    background: linear-gradient(160deg, #1a0e30 0%, #0f0820 100%);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-lg);
+    max-width: 520px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 80px rgba(0,0,0,0.6), 0 0 60px var(--shadow-gold);
+    transform: scale(0.85) translateY(30px);
+    opacity: 0;
+    transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease;
+    padding: 32px 28px;
+    position: relative;
+  }
+  .modal-overlay.active .modal {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+  .modal::-webkit-scrollbar { width: 4px; }
+  .modal::-webkit-scrollbar-track { background: transparent; }
+  .modal::-webkit-scrollbar-thumb { background: var(--gold-dark); border-radius: 2px; }
+
+  .modal-close {
+    position: absolute;
+    top: 14px; right: 16px;
+    width: 36px; height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(212,168,75,0.2);
+    border-radius: 50%;
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.25s;
+  }
+  .modal-close:hover {
+    background: rgba(212,168,75,0.15);
+    color: var(--gold);
+    transform: rotate(90deg);
+  }
+
+  .modal-header {
+    text-align: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(212,168,75,0.15);
+  }
+  .modal-header h2 {
+    font-family: var(--font-cn);
+    font-size: 1.3rem;
+    color: var(--gold);
+    letter-spacing: 0.1em;
+  }
+  .modal-header .divider-line {
+    width: 40px;
+    height: 1px;
+    background: var(--gold);
+    margin: 8px auto 0;
+    opacity: 0.4;
+  }
+
+  /* ── Hexagram Display ── */
+  .hexagram-area {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    justify-content: center;
+    margin: 10px 0 18px;
+    padding: 16px;
+    background: rgba(212,168,75,0.03);
+    border-radius: var(--radius);
+    border: 1px solid rgba(212,168,75,0.08);
+  }
+  .hexagram-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 0;
+  }
+  .hex-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 6px;
+    width: 100px;
+  }
+  .hex-line.yang {
+    background: var(--gold);
+    border-radius: 3px;
+    width: 100px;
+  }
+  .hex-line.yin {
+    background: transparent;
+    width: 100px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .hex-line.yin::before,
+  .hex-line.yin::after {
+    content: '';
+    display: block;
+    height: 6px;
+    width: 44px;
+    background: var(--gold);
+    border-radius: 3px;
+  }
+
+  .hexagram-info {
+    text-align: left;
+    flex: 1;
+    min-width: 0;
+  }
+  .hexagram-name {
+    font-family: var(--font-cn);
+    font-size: 1.6rem;
+    color: var(--gold-light);
+    letter-spacing: 0.08em;
+    line-height: 1.3;
+  }
+  .hexagram-tags {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 0.72rem;
+    padding: 2px 10px;
+    border-radius: 20px;
+    background: rgba(212,168,75,0.1);
+    border: 1px solid rgba(212,168,75,0.2);
+    color: var(--gold-light);
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Analysis Content ── */
+  .analysis-section {
+    margin-top: 16px;
+  }
+  .analysis-section h3 {
+    font-family: var(--font-cn);
+    font-size: 1rem;
+    color: var(--gold);
+    margin-bottom: 8px;
+    letter-spacing: 0.08em;
+  }
+  .analysis-text {
+    font-size: 0.88rem;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    text-align: justify;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.02);
+    border-radius: var(--radius);
+    border-left: 2px solid rgba(212,168,75,0.15);
+  }
+  .element-detail {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 4px 14px;
+    background: rgba(212,168,75,0.06);
+    border-radius: 20px;
+    font-size: 0.85rem;
+  }
+
+  /* ── Element Icons ── */
+  .elem-icon { font-size: 1.1rem; }
+
+  /* ── Scroll hint ── */
+  .scroll-hint {
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 14px;
+    display: none;
+  }
+  .scroll-hint.show { display: block; }
+
+  /* ── Responsive ── */
+  @media (max-width: 480px) {
+    body { padding: 10px; }
+    .container { padding: 24px 16px 32px; border-radius: 16px; }
+    .modal { padding: 24px 18px; }
+    .hexagram-area { flex-direction: column; gap: 12px; }
+    .hexagram-info { text-align: center; }
+    .hexagram-tags { justify-content: center; }
+  }
+  @media (max-width: 360px) {
+    .form-row { grid-template-columns: 1fr; }
+    .hex-line, .hex-line.yang, .hex-line.yin { width: 80px; }
+    .hex-line.yin::before, .hex-line.yin::after { width: 34px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1 class="title">玄机算卦</h1>
+  <p class="subtitle">输入您的信息，揭示命运奥秘</p>
+
+  <form class="form" id="fortuneForm" novalidate>
+    <div class="form-group">
+      <label>姓氏 <span class="star">*</span></label>
+      <input class="form-input" id="surname" type="text" placeholder="请输入您的姓氏" maxlength="8" autocomplete="family-name">
+      <div class="error-msg" id="surnameError">请输入姓氏</div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>出生日期 <span class="star">*</span></label>
+        <input class="form-input" id="birthDate" type="date" min="1900-01-01" max="2026-05-26">
+        <div class="error-msg" id="dateError">请选择出生日期</div>
+      </div>
+      <div class="form-group">
+        <label>出生时辰 <span class="star">*</span></label>
+        <select class="form-input" id="birthTime">
+          <option value="">选择时辰</option>
+          <option value="子时">子时 (23:00-00:59)</option>
+          <option value="丑时">丑时 (01:00-02:59)</option>
+          <option value="寅时">寅时 (03:00-04:59)</option>
+          <option value="卯时">卯时 (05:00-06:59)</option>
+          <option value="辰时">辰时 (07:00-08:59)</option>
+          <option value="巳时">巳时 (09:00-10:59)</option>
+          <option value="午时">午时 (11:00-12:59)</option>
+          <option value="未时">未时 (13:00-14:59)</option>
+          <option value="申时">申时 (15:00-16:59)</option>
+          <option value="酉时">酉时 (17:00-18:59)</option>
+          <option value="戌时">戌时 (19:00-20:59)</option>
+          <option value="亥时">亥时 (21:00-22:59)</option>
+        </select>
+        <div class="error-msg" id="timeError">请选择出生时辰</div>
+      </div>
+    </div>
+
+    <button class="btn-divine" type="submit" id="btnDivine">
+      <span>立即算卦</span>
+    </button>
+  </form>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="taiji"></div>
+  <div class="loading-text">卦象推演中&hellip;</div>
+</div>
+
+<!-- Result Modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modal">
+    <button class="modal-close" id="modalClose" aria-label="关闭">&times;</button>
+    <div class="modal-header">
+      <h2>您的卦象分析结果</h2>
+      <div class="divider-line"></div>
+    </div>
+
+    <div id="resultContent">
+      <div class="hexagram-area">
+        <div class="hexagram-lines" id="hexLines"></div>
+        <div class="hexagram-info">
+          <div class="hexagram-name" id="hexName"></div>
+          <div class="hexagram-tags" id="hexTags"></div>
+        </div>
+      </div>
+
+      <div class="analysis-section">
+        <h3>📜 卦象详解</h3>
+        <div class="analysis-text" id="analysisText"></div>
+      </div>
+
+      <div class="analysis-section" style="margin-top:14px;">
+        <h3>🔥 五行属性</h3>
+        <div class="element-detail" id="elementDetail"></div>
+      </div>
+    </div>
+
+    <div class="scroll-hint" id="scrollHint">↓ 滚动查看完整内容</div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  /* ── Trigram Data ── */
+  const TRIGRAMS = [
+    { code: 0, bits: '000', name: '坤', nature: '地', element: '土', elementEn: 'earth' },
+    { code: 1, bits: '001', name: '艮', nature: '山', element: '土', elementEn: 'earth' },
+    { code: 2, bits: '010', name: '坎', nature: '水', element: '水', elementEn: 'water' },
+    { code: 3, bits: '011', name: '巽', nature: '风', element: '木', elementEn: 'wood' },
+    { code: 4, bits: '100', name: '震', nature: '雷', element: '木', elementEn: 'wood' },
+    { code: 5, bits: '101', name: '离', nature: '火', element: '火', elementEn: 'fire' },
+    { code: 6, bits: '110', name: '兑', nature: '泽', element: '金', elementEn: 'metal' },
+    { code: 7, bits: '111', name: '乾', nature: '天', element: '金', elementEn: 'metal' }
+  ];
+
+  /* ── 64 Hexagram Names (upper_lower → name) ── */
+  const HEX_NAMES = {
+    '7_7': '乾为天', '7_0': '天地否', '7_4': '天雷无妄',
+    '7_3': '天风姤', '7_2': '天水讼', '7_5': '天火同人',
+    '7_1': '天山遁', '7_6': '天泽履',
+    '0_7': '地天泰', '0_0': '坤为地', '0_4': '地雷复',
+    '0_3': '地风升', '0_2': '地水师', '0_5': '地火明夷',
+    '0_1': '地山谦', '0_6': '地泽临',
+    '4_7': '雷天大壮', '4_0': '雷地豫', '4_4': '震为雷',
+    '4_3': '雷风恒', '4_2': '雷水解', '4_5': '雷火丰',
+    '4_1': '雷山小过', '4_6': '雷泽归妹',
+    '3_7': '风天小畜', '3_0': '风地观', '3_4': '风雷益',
+    '3_3': '巽为风', '3_2': '风水涣', '3_5': '风火家人',
+    '3_1': '风山渐', '3_6': '风泽中孚',
+    '2_7': '水天需', '2_0': '水地比', '2_4': '水雷屯',
+    '2_3': '水风井', '2_2': '坎为水', '2_5': '水火既济',
+    '2_1': '水山蹇', '2_6': '水泽节',
+    '5_7': '火天大有', '5_0': '火地晋', '5_4': '火雷噬嗑',
+    '5_3': '火风鼎', '5_2': '火水未济', '5_5': '离为火',
+    '5_1': '火山旅', '5_6': '火泽睽',
+    '1_7': '山天大畜', '1_0': '山地剥', '1_4': '山雷颐',
+    '1_3': '山风蛊', '1_2': '山水蒙', '1_5': '山火贲',
+    '1_1': '艮为山', '1_6': '山泽损',
+    '6_7': '泽天夬', '6_0': '泽地萃', '6_4': '泽雷随',
+    '6_3': '泽风大过', '6_2': '泽水困', '6_5': '泽火革',
+    '6_1': '泽山咸', '6_6': '兑为泽'
+  };
+
+  /* ── Element Analysis Texts ── */
+  const ELEM_ANALYSIS = {
+    '金': '金主肃杀，象征决断与变革。此卦金气旺盛，预示您正处于关键的转折点，需要果断下决心，抓住机遇。勃发的金气赋予您洞察迷雾的锐气，但也提醒您不要太过刚猛，需要刚柔并济。',
+    '木': '木主生发，象征成长与扩张。此卦木气通达，预示您正处于蓬勃发展的阶段，诸事亨通。向上的生长力量推动您不断前进，宜乘势而上，同时也要注意培根固本，免得基础不稳。',
+    '水': '水主智慧，象征流动与变化。此卦水气灵动，预示您需要灵活应变，顺势而为。水的智慧告诉您，有时此路不通，就换一条路走，不要执着于一个方向。随机而变、因势利导，将为您开启新的纪元。',
+    '火': '火主热情，象征光明与照耀。此卦火气旺盛，预示您的努力将获得显赫成果，事业前途一片光明。火代表照亮他人的力量，您的热情和才华正在影响周围的人，但也要注意火焰太旺易烧伤自己，需保持内心的平和。',
+    '土': '土主中和，象征稳定与承载。此卦土气厚重，预示您基础稳固，宜守不宜攻。土拥有承载万物的德行，赋予您坚定与容忍的品质。此时需要安心积聚实力，不可轻举妄动。将来必有厚积薄发之时。'
+  };
+
+  const ELEM_ICONS = {
+    '金': '✨', '木': '🌳', '水': '🌊', '火': '🔥', '土': '⛰️'
+  };
+
+  const ELEM_COLORS = {
+    '金': '#f0d080', '木': '#80d080', '水': '#6090e0', '火': '#e06050', '土': '#d0b060'
+  };
+
+  /* ── Analysis Templates ── */
+  function generateAnalysis(hexagram) {
+    const upper = TRIGRAMS[hexagram.upper];
+    const lower = TRIGRAMS[hexagram.lower];
+    const elem = hexagram.element;
+
+    const yangCount = hexagram.lines.filter(b => b === 1).length;
+    const yinCount = 6 - yangCount;
+
+    let balance = '';
+    if (yangCount === 6) balance = '此卦纯阳，代表极致的创造力与威严，属于强者之卦。阳气盎然，行事刚正不阿，但亦需谨防过刚易折。';
+    else if (yinCount === 6) balance = '此卦纯阴，代表极致的承受力与包容，属于守成之卦。阴气深厚，内秀中华，宜静观其变，不可轻举妄动。';
+    else if (yangCount >= 4) balance = '阳氣偏旺，动力充足。您正处于积极主动的时期，宜主动出击，抢占先机。但需谨防冲动行事，多加思虑。';
+    else if (yinCount >= 4) balance = '阴氣较重，以守为主。您此时宜静不宜动，多观察、多思考，积蓄力量。守得云开见月明，时机成熟再行动。';
+    else balance = '阴阳均衡，和谐理想。您的处境与心态处于平衡状态，这是非常吉利的征兆。事业与生活将有望平稳发展，诸事顺遂。';
+
+    const elementText = ELEM_ANALYSIS[elem] || '';
+
+    const elemRelation = getElementRelation(lower.elementEn, upper.elementEn);
+    const relationText = getRelationText(elemRelation, upper, lower);
+
+    return `${balance}\n\n${relationText}\n\n${elementText}`;
+  }
+
+  function getElementRelation(lower, upper) {
+    const gen = { wood: 'fire', fire: 'earth', earth: 'metal', metal: 'water', water: 'wood' };
+    const control = { wood: 'earth', earth: 'water', water: 'fire', fire: 'metal', metal: 'wood' };
+    if (lower === upper) return 'same';
+    if (gen[lower] === upper) return 'lowerGenUpper';
+    if (gen[upper] === lower) return 'upperGenLower';
+    if (control[lower] === upper) return 'lowerControlUpper';
+    if (control[upper] === lower) return 'upperControlLower';
+    return 'neutral';
+  }
+
+  function getRelationText(rel, upper, lower) {
+    switch (rel) {
+      case 'same':
+        return `上卦为${upper.nature}（${upper.name}），下卦为${lower.nature}（${lower.name}），上下五行皆为${lower.element}，同气相求，互相助益。这表明您的内外一致，踏实前行即可。`;
+      case 'lowerGenUpper':
+        return `下卦${lower.nature}（${lower.element}）生上卦${upper.nature}（${upper.element}），为下生上，象征基础奠定、前程可期。您的努力将会得到回报，上级或外部力量将为您提供支持。`;
+      case 'upperGenLower':
+        return `上卦${upper.nature}（${upper.element}）生下卦${lower.nature}（${lower.element}），为上生下，象征天时地利，外部条件有利于您的发展。您可以善用外部资源，助力自身成长。`;
+      case 'lowerControlUpper':
+        return `下卦${lower.nature}（${lower.element}）克上卦${upper.nature}（${upper.element}），为内克外，象征您具有强大的内在力量，能够克服外部困难。但需注意不要过于自信，多听取他人意见。`;
+      case 'upperControlLower':
+        return `上卦${upper.nature}（${upper.element}）克下卦${lower.nature}（${lower.element}），为外克内，象征当前环境对您有一定压力。请保持定心与耐心，克服短期困难，将会迎来转机。`;
+      default:
+        return `上卦为${upper.nature}（${upper.name}），下卦为${lower.nature}（${lower.name}）。上下互动，其中奥妙需您细细品味。`;
+    }
+  }
+
+  /* ── Hexagram Generation ── */
+  function getHexagram(surname, dateStr, timeStr) {
+    const seed = hashStr(surname + dateStr + timeStr);
+    const rng = seededRandom(seed);
+    const idx = Math.floor(rng() * 64);
+    const upperCode = Math.floor(idx / 8);
+    const lowerCode = idx % 8;
+    const trgmUpper = TRIGRAMS[upperCode];
+    const trgmLower = TRIGRAMS[lowerCode];
+    const key = upperCode + '_' + lowerCode;
+    const name = HEX_NAMES[key] || trgmUpper.nature + trgmLower.nature + '卦';
+    const lines = [
+      (upperCode & 4) ? 1 : 0,
+      (upperCode & 2) ? 1 : 0,
+      (upperCode & 1) ? 1 : 0,
+      (lowerCode & 4) ? 1 : 0,
+      (lowerCode & 2) ? 1 : 0,
+      (lowerCode & 1) ? 1 : 0
+    ];
+    const element = trgmLower.element;
+    return {
+      id: idx + 1,
+      name: name,
+      lines: lines,
+      upper: upperCode,
+      lower: lowerCode,
+      element: element,
+      trigramUpper: trgmUpper,
+      trigramLower: trgmLower
+    };
+  }
+
+  function hashStr(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + ch;
+      hash = hash & hash;
+    }
+    return Math.abs(hash);
+  }
+
+  function seededRandom(seed) {
+    let s = seed % 2147483647;
+    if (s <= 0) s += 2147483646;
+    return function() {
+      s = (s * 16807) % 2147483647;
+      return (s - 1) / 2147483646;
+    };
+  }
+
+  /* ── Render Hexagram ── */
+  function renderHexagram(hexagram) {
+    const container = document.getElementById('hexLines');
+    container.innerHTML = '';
+    hexagram.lines.forEach((bit) => {
+      const div = document.createElement('div');
+      div.className = 'hex-line ' + (bit === 1 ? 'yang' : 'yin');
+      container.appendChild(div);
+    });
+
+    document.getElementById('hexName').textContent = hexagram.name;
+
+    const tags = document.getElementById('hexTags');
+    tags.innerHTML = '';
+    const t1 = document.createElement('span');
+    t1.className = 'tag';
+    t1.textContent = '第' + hexagram.id + '卦';
+    tags.appendChild(t1);
+    const t2 = document.createElement('span');
+    t2.className = 'tag';
+    t2.textContent = '上' + hexagram.trigramUpper.nature + '下' + hexagram.trigramLower.nature;
+    tags.appendChild(t2);
+
+    const elem = hexagram.element;
+    const elemIcon = ELEM_ICONS[elem] || '';
+    const elemColor = ELEM_COLORS[elem] || '#d4a84b';
+    const elemDetail = document.getElementById('elementDetail');
+    elemDetail.innerHTML = `${elemIcon} 五行属性：<span style="color:${elemColor};font-weight:600;">${elem}</span>  ·  下卦：${hexagram.trigramLower.name}（${hexagram.trigramLower.nature}） 上卦：${hexagram.trigramUpper.name}（${hexagram.trigramUpper.nature}）`;
+
+    const analysis = document.getElementById('analysisText');
+    const text = generateAnalysis(hexagram);
+    analysis.textContent = text;
+  }
+
+  /* ── Form & UI Logic ── */
+  const form = document.getElementById('fortuneForm');
+  const surnameInput = document.getElementById('surname');
+  const dateInput = document.getElementById('birthDate');
+  const timeSelect = document.getElementById('birthTime');
+  const surnameErr = document.getElementById('surnameError');
+  const dateErr = document.getElementById('dateError');
+  const timeErr = document.getElementById('timeError');
+  const btn = document.getElementById('btnDivine');
+  const loadingOverlay = document.getElementById('loadingOverlay');
+  const modalOverlay = document.getElementById('modalOverlay');
+  const modalClose = document.getElementById('modalClose');
+
+  // Set max date
+  dateInput.max = '2026-05-26';
+
+  function validate() {
+    let valid = true;
+    if (!surnameInput.value.trim()) {
+      surnameInput.classList.add('error');
+      surnameErr.classList.add('show');
+      valid = false;
+    } else {
+      surnameInput.classList.remove('error');
+      surnameErr.classList.remove('show');
+    }
+    if (!dateInput.value) {
+      dateInput.classList.add('error');
+      dateErr.classList.add('show');
+      valid = false;
+    } else {
+      dateInput.classList.remove('error');
+      dateErr.classList.remove('show');
+    }
+    if (!timeSelect.value) {
+      timeSelect.classList.add('error');
+      timeErr.classList.add('show');
+      valid = false;
+    } else {
+      timeSelect.classList.remove('error');
+      timeErr.classList.remove('show');
+    }
+    return valid;
+  }
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    if (!validate()) return;
+
+    btn.disabled = true;
+
+    loadingOverlay.classList.add('active');
+
+    setTimeout(function() {
+      loadingOverlay.classList.remove('active');
+
+      const hexagram = getHexagram(
+        surnameInput.value.trim(),
+        dateInput.value,
+        timeSelect.value
+      );
+
+      renderHexagram(hexagram);
+      showModal();
+
+      btn.disabled = false;
+    }, 2200);
+  });
+
+  // Real-time validation clear
+  surnameInput.addEventListener('input', function() {
+    if (this.value.trim()) {
+      this.classList.remove('error');
+      surnameErr.classList.remove('show');
+    }
+  });
+  dateInput.addEventListener('change', function() {
+    if (this.value) {
+      this.classList.remove('error');
+      dateErr.classList.remove('show');
+    }
+  });
+  timeSelect.addEventListener('change', function() {
+    if (this.value) {
+      this.classList.remove('error');
+      timeErr.classList.remove('show');
+    }
+  });
+
+  function showModal() {
+    modalOverlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    // Show scroll hint if modal is scrollable
+    const modal = document.getElementById('modal');
+    setTimeout(function() {
+      const sh = document.getElementById('scrollHint');
+      if (modal.scrollHeight > modal.clientHeight) {
+        sh.classList.add('show');
+      } else {
+        sh.classList.remove('show');
+      }
+    }, 500);
+  }
+
+  function hideModal() {
+    modalOverlay.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  modalClose.addEventListener('click', hideModal);
+  modalOverlay.addEventListener('click', function(e) {
+    if (e.target === modalOverlay) hideModal();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && modalOverlay.classList.contains('active')) {
+      hideModal();
+    }
+  });
+
+  /* ── Prefill today's date ── */
+  const today = new Date().toISOString().split('T')[0];
+  dateInput.value = today;
+
+})();
+</script>
+</body>
+</html>

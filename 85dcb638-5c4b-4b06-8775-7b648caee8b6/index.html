@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>{{title}}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: sans-serif; overflow: hidden; touch-action: none; }
+canvas { display: block; background: #16213e; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game')
+const ctx = canvas.getContext('2d')
+
+// --- GAME CONFIG ---
+const GAME_WIDTH = 800
+const GAME_HEIGHT = 500
+canvas.width = GAME_WIDTH
+canvas.height = GAME_HEIGHT
+
+const GRAVITY = 0.6
+const JUMP_FORCE = -12
+const MOVE_SPEED = 5
+
+// --- INPUT ---
+const keys = {}
+document.addEventListener('keydown', e => { keys[e.key] = true })
+document.addEventListener('keyup', e => { keys[e.key] = false })
+
+// --- PLAYER ---
+const player = {
+  x: 80, y: 300, w: 30, h: 36,
+  vx: 0, vy: 0,
+  onGround: false,
+  hp: 3, maxHp: 3,
+  invincible: 0
+}
+
+// --- LEVEL DATA ---
+const platforms = [
+  { x: 0, y: 470, w: 800, h: 30 },
+  { x: 150, y: 360, w: 120, h: 16 },
+  { x: 350, y: 280, w: 120, h: 16 },
+  { x: 550, y: 360, w: 120, h: 16 },
+]
+
+const collectibles = [
+  { x: 200, y: 330, w: 20, h: 20, collected: false },
+  { x: 400, y: 250, w: 20, h: 20, collected: false },
+  { x: 600, y: 330, w: 20, h: 20, collected: false },
+]
+
+const enemies = [
+  { x: 400, y: 452, w: 28, h: 18, vx: -1.5, alive: true },
+]
+
+const goal = { x: 740, y: 430, w: 30, h: 40 }
+
+let score = 0
+let gameOver = false
+let gameWon = false
+
+// --- UPDATE ---
+function update() {
+  if (gameOver || gameWon) return
+
+  // Horizontal movement
+  player.vx = 0
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) player.vx = -MOVE_SPEED
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) player.vx = MOVE_SPEED
+
+  // Jump
+  if ((keys['ArrowUp'] || keys['w'] || keys['W'] || keys[' ']) && player.onGround) {
+    player.vy = JUMP_FORCE
+    player.onGround = false
+  }
+
+  // Gravity
+  player.vy += GRAVITY
+  if (player.vy > 15) player.vy = 15
+
+  // Horizontal collision
+  player.x += player.vx
+  for (const p of platforms) {
+    if (player.x < p.x + p.w && player.x + player.w > p.x &&
+        player.y < p.y + p.h && player.y + player.h > p.y) {
+      if (player.vx > 0) player.x = p.x - player.w
+      else if (player.vx < 0) player.x = p.x + p.w
+    }
+  }
+
+  // Vertical collision
+  player.y += player.vy
+  player.onGround = false
+  for (const p of platforms) {
+    if (player.x < p.x + p.w && player.x + player.w > p.x &&
+        player.y < p.y + p.h && player.y + player.h > p.y) {
+      if (player.vy > 0) {
+        player.y = p.y - player.h
+        player.onGround = true
+      } else if (player.vy < 0) {
+        player.y = p.y + p.h
+      }
+      player.vy = 0
+    }
+  }
+
+  // Fall off screen
+  if (player.y > GAME_HEIGHT + 50) {
+    player.hp = 0
+  }
+
+  // Invincibility timer
+  if (player.invincible > 0) player.invincible--
+
+  // Collectibles
+  for (const c of collectibles) {
+    if (!c.collected && player.x < c.x + c.w && player.x + player.w > c.x &&
+        player.y < c.y + c.h && player.y + player.h > c.y) {
+      c.collected = true
+      score += 100
+    }
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    if (!e.alive) continue
+    e.x += e.vx
+    if (e.x <= 300 || e.x >= 500) e.vx *= -1
+
+    // Player collision with enemy
+    if (player.invincible === 0 &&
+        player.x < e.x + e.w && player.x + player.w > e.x &&
+        player.y < e.y + e.h && player.y + player.h > e.y) {
+      // Stomp enemy
+      if (player.vy > 0 && player.y + player.h - e.y < 15) {
+        e.alive = false
+        player.vy = JUMP_FORCE / 1.5
+        score += 200
+      } else {
+        player.hp--
+        player.invincible = 60
+        player.vy = JUMP_FORCE / 2
+        if (player.hp <= 0) gameOver = true
+      }
+    }
+  }
+
+  // Goal
+  if (player.x < goal.x + goal.w && player.x + player.w > goal.x &&
+      player.y < goal.y + goal.h && player.y + player.h > goal.y) {
+    gameWon = true
+  }
+}
+
+// --- DRAW ---
+function draw() {
+  ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+
+  // Background
+  ctx.fillStyle = '#16213e'
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+
+  // Platforms
+  ctx.fillStyle = '#0f3460'
+  for (const p of platforms) {
+    ctx.fillRect(p.x, p.y, p.w, p.h)
+    ctx.fillStyle = '#e94560'
+    ctx.fillRect(p.x, p.y, p.w, 4)
+    ctx.fillStyle = '#0f3460'
+  }
+
+  // Collectibles
+  for (const c of collectibles) {
+    if (c.collected) continue
+    ctx.fillStyle = '#ffd700'
+    ctx.beginPath()
+    ctx.arc(c.x + c.w/2, c.y + c.h/2, c.w/2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#fff8dc'
+    ctx.beginPath()
+    ctx.arc(c.x + c.w/2 - 3, c.y + c.h/2 - 3, 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    if (!e.alive) continue
+    ctx.fillStyle = '#e94560'
+    ctx.fillRect(e.x, e.y, e.w, e.h)
+    ctx.fillStyle = '#ff6b6b'
+    ctx.fillRect(e.x + 3, e.y + 3, e.w - 6, e.h - 6)
+  }
+
+  // Goal
+  ctx.fillStyle = '#4ecca3'
+  ctx.fillRect(goal.x, goal.y, goal.w, goal.h)
+  ctx.fillStyle = '#7effdb'
+  ctx.fillRect(goal.x + 5, goal.y + 5, goal.w - 10, goal.h - 10)
+
+  // Player
+  ctx.fillStyle = player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0 ? '#ff9999' : '#4ecca3'
+  ctx.fillRect(player.x, player.y, player.w, player.h)
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(player.x + 6, player.y + 6, 6, 6)
+  ctx.fillRect(player.x + 18, player.y + 6, 6, 6)
+
+  // UI
+  ctx.fillStyle = '#fff'
+  ctx.font = '16px sans-serif'
+  ctx.fillText('❤️'.repeat(player.hp) + '🖤'.repeat(player.maxHp - player.hp), 12, 24)
+  ctx.fillText('分数: ' + score, 12, 48)
+
+  // Game over / win
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+    ctx.fillStyle = '#e94560'
+    ctx.font = 'bold 40px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('游戏结束', GAME_WIDTH/2, GAME_HEIGHT/2 - 10)
+    ctx.font = '18px sans-serif'
+    ctx.fillStyle = '#ccc'
+    ctx.fillText('按 R 键重新开始', GAME_WIDTH/2, GAME_HEIGHT/2 + 40)
+    ctx.textAlign = 'left'
+  }
+  if (gameWon) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+    ctx.fillStyle = '#4ecca3'
+    ctx.font = 'bold 40px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('恭喜过关！', GAME_WIDTH/2, GAME_HEIGHT/2 - 10)
+    ctx.font = '18px sans-serif'
+    ctx.fillStyle = '#ccc'
+    ctx.fillText('分数: ' + score + '  按 R 键重新开始', GAME_WIDTH/2, GAME_HEIGHT/2 + 40)
+    ctx.textAlign = 'left'
+  }
+}
+
+// --- RESTART ---
+function restart() {
+  player.x = 80; player.y = 300
+  player.vx = 0; player.vy = 0
+  player.hp = player.maxHp
+  player.invincible = 0
+  player.onGround = false
+  for (const c of collectibles) c.collected = false
+  for (const e of enemies) { e.alive = true; e.x = 400 }
+  score = 0
+  gameOver = false
+  gameWon = false
+}
+document.addEventListener('keydown', e => {
+  if ((e.key === 'r' || e.key === 'R') && (gameOver || gameWon)) restart()
+})
+
+// --- GAME LOOP ---
+function gameLoop() {
+  update()
+  draw()
+  requestAnimationFrame(gameLoop)
+}
+gameLoop()
+
+// Handle resize
+function resize() {
+  const scale = Math.min(window.innerWidth / GAME_WIDTH, window.innerHeight / GAME_HEIGHT)
+  canvas.style.width = (GAME_WIDTH * scale) + 'px'
+  canvas.style.height = (GAME_HEIGHT * scale) + 'px'
+}
+window.addEventListener('resize', resize)
+resize()
+</script>
+</body>
+</html>
