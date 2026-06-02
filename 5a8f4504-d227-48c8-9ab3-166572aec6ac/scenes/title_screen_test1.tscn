@@ -1,0 +1,40 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/title_screen.gd" id="1_m2n3b"]
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_k8h2j"]
+color = Color(0.3, 0.6, 1.0, 0.2)
+particle_flag_disable_z = true
+direction = Vector3(0, -1, 0)
+spread = 180.0
+initial_velocity_min = 10.0
+initial_velocity_max = 30.0
+lifetime_min = 2.0
+lifetime_max = 4.0
+scale_min = 0.5
+scale_max = 1.0
+gravity = Vector3(0, 0, 0)
+
+[node name="TitleScreen" type="CanvasLayer"]
+layer = 1
+script = ExtResource("1_m2n3b")
+
+[node name="BGParticles" type="GPUParticles2D" parent="."]
+unique_name_in_owner = true
+position = Vector2(640, 360)
+amount = 30
+lifetime = 3.0
+one_shot = false
+emitting = true
+local_coords = false
+process_material = SubResource("ParticleProcessMaterial_k8h2j")
+z_index = 0
+
+[node name="TitleLabel" type="Label" parent="."]
+unique_name_in_owner = true
+position = Vector2(340, 120)
+size = Vector2(600, 80)
+text = "Title"
+horizontal_alignment = 1
+vertical_alignment = 1
+z_index = 2

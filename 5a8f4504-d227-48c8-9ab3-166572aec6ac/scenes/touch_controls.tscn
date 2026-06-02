@@ -1,0 +1,53 @@
+[gd_scene load_steps=1 format=3]
+
+[ext_resource type="Script" path="res://scripts/touch_controls.gd" id="1_hnmfd"]
+
+[node name="TouchControls" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("1_hnmfd")
+
+[node name="JoystickBase" type="TextureRect" parent="."]
+unique_name_in_owner = true
+position = Vector2(40, 520)
+size = Vector2(100, 100)
+modulate = Color(1, 1, 1, 0.25)
+color = Color(1, 1, 1, 0.25)
+mouse_filter = 2
+
+[node name="JoystickHandle" type="TextureRect" parent="."]
+unique_name_in_owner = true
+position = Vector2(65, 545)
+size = Vector2(50, 50)
+modulate = Color(1, 1, 1, 0.4)
+color = Color(1, 1, 1, 0.4)
+mouse_filter = 2
+
+[node name="FlashButton" type="TextureRect" parent="."]
+unique_name_in_owner = true
+position = Vector2(1170, 540)
+size = Vector2(70, 70)
+modulate = Color(1, 1, 1, 0.4)
+color = Color(1, 1, 1, 0.4)
+mouse_filter = 2
+
+[node name="FlashCooldownOverlay" type="TextureRect" parent="."]
+unique_name_in_owner = true
+position = Vector2(1170, 540)
+size = Vector2(70, 70)
+modulate = Color(1, 1, 1, 0.6)
+color = Color(0, 0, 0, 0.6)
+visible = false
+mouse_filter = 2
+
+[node name="FlashLabel" type="Label" parent="FlashButton"]
+position = Vector2(10, 22)
+size = Vector2(50, 25)
+text = "闪光"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 1, 1, 0.8)
+theme_override_font_sizes/font_size = 12
+mouse_filter = 2

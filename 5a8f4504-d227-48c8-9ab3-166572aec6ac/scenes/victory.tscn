@@ -1,0 +1,130 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/victory_screen.gd" id="1_p6r7s"]
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_n4m5v"]
+color = Color(0.3, 0.8, 1.0, 0.3)
+particle_flag_disable_z = true
+direction = Vector3(0, -1, 0)
+spread = 360.0
+initial_velocity_min = 20.0
+initial_velocity_max = 60.0
+lifetime_min = 1.0
+lifetime_max = 3.0
+scale_min = 0.3
+scale_max = 0.8
+gravity = Vector3(0, 0, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_h5j8k"]
+width = 2
+gradient = SubResource("Gradient_h5j8k")
+
+[sub_resource type="Gradient" id="Gradient_h5j8k"]
+offsets = PackedFloat32Array(0, 0.5, 1)
+colors = PackedColorArray(1, 0.9, 0.3, 1, 1, 0.5, 0.2, 1, 0.3, 0.8, 1, 1)
+
+[node name="VictoryScreen" type="CanvasLayer"]
+layer = 1
+script = ExtResource("1_p6r7s")
+
+[node name="BGParticles" type="GPUParticles2D" parent="."]
+unique_name_in_owner = true
+position = Vector2(640, 360)
+amount = 50
+lifetime = 2.0
+one_shot = false
+emitting = true
+local_coords = false
+process_material = SubResource("ParticleProcessMaterial_n4m5v")
+z_index = 0
+
+[node name="VictoryLabel" type="Label" parent="."]
+unique_name_in_owner = true
+position = Vector2(340, 80)
+size = Vector2(600, 80)
+text = "✦ 逃 出 成 功 ✦"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 0.85, 0.3, 1.0)
+theme_override_font_sizes/font_size = 48
+theme_override_constants/outline_size = 4
+theme_override_colors/font_outline_color = Color(0.2, 0.1, 0, 0.6)
+z_index = 2
+
+[node name="TimeLabel" type="Label" parent="."]
+unique_name_in_owner = true
+position = Vector2(390, 200)
+size = Vector2(500, 40)
+text = "通关时间: 00:00.00"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(0.7, 0.8, 1.0, 1.0)
+theme_override_font_sizes/font_size = 22
+z_index = 2
+
+[node name="RatingLabel" type="Label" parent="."]
+unique_name_in_owner = true
+position = Vector2(390, 250)
+size = Vector2(500, 50)
+text = "S - 完美通关！"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 0.8, 0.1, 1.0)
+theme_override_font_sizes/font_size = 28
+theme_override_constants/outline_size = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.5)
+z_index = 2
+
+[node name="GemsLabel" type="Label" parent="."]
+unique_name_in_owner = true
+position = Vector2(390, 320)
+size = Vector2(500, 30)
+text = "宝石收集: 5/5"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(0.3, 0.8, 1.0, 0.7)
+theme_override_font_sizes/font_size = 16
+z_index = 2
+
+[node name="LivesLabel" type="Label" parent="."]
+unique_name_in_owner = true
+position = Vector2(390, 350)
+size = Vector2(500, 30)
+text = "剩余生命: 3"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 0.3, 0.3, 0.7)
+theme_override_font_sizes/font_size = 16
+z_index = 2
+
+[node name="RetryButton" type="Button" parent="."]
+unique_name_in_owner = true
+position = Vector2(490, 430)
+size = Vector2(300, 55)
+text = "再 玩 一 次"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 1, 1, 1.0)
+theme_override_colors/font_pressed_color = Color(0.7, 0.8, 1.0, 1.0)
+theme_override_colors/font_hover_color = Color(0.8, 0.9, 1.0, 1.0)
+theme_override_colors/normal = Color(0.2, 0.3, 0.4, 0.8)
+theme_override_colors/hover = Color(0.25, 0.35, 0.5, 0.9)
+theme_override_colors/pressed = Color(0.15, 0.2, 0.3, 0.9)
+theme_override_font_sizes/font_size = 22
+z_index = 2
+
+[node name="MenuButton" type="Button" parent="."]
+unique_name_in_owner = true
+position = Vector2(490, 505)
+size = Vector2(300, 55)
+text = "返回主菜单"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1.0)
+theme_override_colors/font_pressed_color = Color(0.5, 0.5, 0.5, 1.0)
+theme_override_colors/font_hover_color = Color(1, 1, 1, 1.0)
+theme_override_colors/normal = Color(0.12, 0.12, 0.2, 0.8)
+theme_override_colors/hover = Color(0.18, 0.18, 0.3, 0.9)
+theme_override_colors/pressed = Color(0.1, 0.1, 0.15, 0.9)
+theme_override_font_sizes/font_size = 18
+z_index = 2

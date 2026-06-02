@@ -1,0 +1,2120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!--
+  AI Prompt / 提示词:
+  玩家在抽象几何风格的超现实空间中，通过按键切换上下左右重力方向，在平台、墙壁和天花板之间自由跳跃。核心玩法：主角可瞬间改变自身重力方向，从而在任意表面站立并跳跃；攻击方式为按下攻击键释放重力冲击波，推开敌人或击碎障碍物；得分条件为收集场景中散落的彩色能量球，每个+100分，连续收集获得连击加成。操作方式：方向键/WASD控制移动，空格跳跃，Q/E键旋转重力方向（上下左右切换），鼠标左键或J键释放冲击波。视觉风格：黑白红配色，简洁几何体构成平台，背景为动态流动的线条网格，角色为发光的三角形。胜利条件：在限时5分钟内抵达每关的传送门出口，中途触碰红色尖刺或敌人即失败，需从本关起点复活。全部12关通过后出现通关动画与总得分排名。
+-->
+<meta name="description" content="玩家在抽象几何风格的超现实空间中，通过按键切换上下左右重力方向，在平台、墙壁和天花板之间自由跳跃。核心玩法：主角可瞬间改变自身重力方向，从而在任意表面站立并跳跃；攻击方式为按下攻击键释放重力冲击波，推开敌人或击碎障碍物；得分条件为收集场景中散落的彩色能量球，每个+100分，连续收集获得连击加成。操作方式：方向键/WASD控制移动，空格跳跃，Q/E键旋转重力方向（上下左右切换），鼠标左键或J键释放冲击波。视觉风格：黑白红配色，简洁几何体构成平台，背景为动态流动的线条网格，角色为发光的三角形。胜利条件：在限时5分钟内抵达每关的传送门出口，中途触碰红色尖刺或敌人即失败，需从本关起点复活。全部12关通过后出现通关动画与总得分排名。">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>重力迷踪</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Courier New',monospace}
+#game-container{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+canvas{display:block;background:#0a0a0a;image-rendering:pixelated}
+#ui-layer{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#hud{position:absolute;top:0;left:0;width:100%;padding:12px 18px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:10}
+.hud-left,.hud-right{display:flex;flex-direction:column;gap:4px}
+.hud-item{color:#fff;font-size:14px;text-shadow:0 0 6px rgba(0,0,0,0.9),0 0 3px #000;letter-spacing:0.5px}
+.hud-item span{color:#e74c3c;font-weight:bold}
+.hud-item.val{color:#ffd700}
+#combo-display{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:32px;font-weight:bold;color:#ffd700;text-shadow:0 0 20px rgba(255,215,0,0.8),0 0 40px rgba(255,215,0,0.4);opacity:0;transition:opacity 0.15s;pointer-events:none;z-index:15}
+#combo-display.show{opacity:1}
+#grav-indicator{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:10;pointer-events:none}
+.grav-dot{width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-radius:50%;transition:all 0.2s}
+.grav-dot.active{border-color:#fff;background:#e74c3c;box-shadow:0 0 12px rgba(231,76,60,0.6)}
+.grav-dot.pulse{animation:gravPulse 0.3s ease}
+@keyframes gravPulse{0%{transform:scale(1)}50%{transform:scale(1.6)}100%{transform:scale(1)}}
+#mobile-controls{position:absolute;bottom:0;left:0;width:100%;height:120px;display:none;justify-content:space-between;padding:0 10px 10px;z-index:20;pointer-events:none}
+.mctrl-group{display:flex;gap:6px;pointer-events:auto}
+.mctrl-btn{width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.25);color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:none;-webkit-tap-highlight-color:transparent}
+.mctrl-btn:active{background:rgba(255,255,255,0.25);transform:scale(0.92)}
+.mctrl-btn.atk{width:64px;height:64px;border-color:#e74c3c;color:#e74c3c;font-size:14px;font-weight:bold;position:absolute;right:16px;bottom:10px}
+.mctrl-btn.jump{width:64px;height:64px;border-color:#fff;position:absolute;right:80px;bottom:10px}
+.mctrl-btn.grav{width:48px;height:48px;font-size:18px}
+.mctrl-dpad{position:absolute;left:12px;bottom:10px;display:grid;grid-template-columns:56px 56px 56px;grid-template-rows:56px 56px;gap:2px}
+.mctrl-dpad .mctrl-btn:nth-child(1){grid-column:2;grid-row:1}
+.mctrl-dpad .mctrl-btn:nth-child(2){grid-column:1;grid-row:2}
+.mctrl-dpad .mctrl-btn:nth-child(3){grid-column:3;grid-row:2}
+.mctrl-dpad .mctrl-btn:nth-child(4){grid-column:2;grid-row:2}
+.mctrl-dpad .mctrl-btn:nth-child(5){grid-column:1;grid-row:1}
+.mctrl-dpad .mctrl-btn:nth-child(6){grid-column:3;grid-row:1}
+</style>
+</head>
+<body>
+<div id="game-container">
+<canvas id="game"></canvas>
+<div id="ui-layer">
+<div id="hud">
+<div class="hud-left">
+<div class="hud-item">关卡: <span id="hud-level">1</span></div>
+<div class="hud-item">得分: <span class="val" id="hud-score">0</span></div>
+<div class="hud-item">连击: <span id="hud-combo">0</span>x</div>
+</div>
+<div class="hud-right">
+<div class="hud-item">⏱ <span id="hud-timer">5:00</span></div>
+<div class="hud-item" style="font-size:12px;color:#888">FPS: <span id="hud-fps">60</span></div>
+</div>
+</div>
+<div id="combo-display"></div>
+<div id="grav-indicator">
+<div class="grav-dot" data-dir="0"></div>
+<div class="grav-dot" data-dir="1"></div>
+<div class="grav-dot" data-dir="2"></div>
+<div class="grav-dot" data-dir="3"></div>
+</div>
+</div>
+<div id="mobile-controls">
+<div class="mctrl-dpad">
+<div class="mctrl-btn" data-btn="up">▲</div>
+<div class="mctrl-btn" data-btn="left">◀</div>
+<div class="mctrl-btn" data-btn="right">▶</div>
+<div class="mctrl-btn" data-btn="down">▼</div>
+<div class="mctrl-btn" data-btn="gravL">↺</div>
+<div class="mctrl-btn" data-btn="gravR">↻</div>
+</div>
+<div class="mctrl-btn jump" data-btn="jump">▲</div>
+<div class="mctrl-btn atk" data-btn="attack">⚡</div>
+</div>
+</div>
+<script>
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const CONFIG = {
+  W: 960, H: 640,
+  GRAVITY: 900,
+  JUMP_FORCE: 390,
+  MOVE_SPEED: 210,
+  MAX_SPEED: 260,
+  ACCEL: 1400,
+  DECEL: 800,
+  COYOTE_TIME: 0.085,
+  JUMP_BUFFER: 0.12,
+  ORB_SCORE: 100,
+  COMBO_BONUS: 50,
+  COMBO_WINDOW: 2.0,
+  LEVEL_TIME: 300,
+  SHOCKWAVE_SPEED: 400,
+  SHOCKWAVE_MAX_RADIUS: 180,
+  SHOCKWAVE_KNOCKBACK: 600,
+  SHOCKWAVE_COOLDOWN: 0.6,
+  PLAYER_W: 22,
+  PLAYER_H: 28,
+};
+
+const GRAVITY_CFG = [
+  { gx:0, gy:1, perpX:1, perpY:0, label:'down' },
+  { gx:-1, gy:0, perpX:0, perpY:-1, label:'left' },
+  { gx:0, gy:-1, perpX:-1, perpY:0, label:'up' },
+  { gx:1, gy:0, perpX:0, perpY:1, label:'right' },
+];
+
+const COLORS = {
+  bg: '#0a0a0a',
+  grid: 'rgba(255,255,255,0.045)',
+  gridFlow: 'rgba(255,255,255,0.07)',
+  platform: '#e8e8e8',
+  platformBorder: '#e74c3c',
+  player: '#ff6b35',
+  playerGlow: 'rgba(255,107,53,0.5)',
+  orb: ['#3498db','#2ecc71','#f1c40f','#9b59b6','#e74c3c'],
+  enemy: '#c0392b',
+  spike: '#e74c3c',
+  portal: '#ffffff',
+  portalGlow: 'rgba(255,255,255,0.4)',
+  shockwave: 'rgba(255,50,50,0.6)',
+  scorePopup: '#ffd700',
+};
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
+const lerp=(a,b,t)=>a+(b-a)*t;
+const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const rand=(min,max)=>Math.random()*(max-min)+min;
+const randInt=(min,max)=>Math.floor(rand(min,max+1));
+const AABB=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+const hexToRgba=(hex,alpha=1)=>{
+  const r=parseInt(hex.slice(1,3),16);
+  const g=parseInt(hex.slice(3,5),16);
+  const b=parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+};
+
+// ============================================================
+// SOUND SYSTEM (Web Audio API)
+// ============================================================
+class SoundFX {
+  constructor() {
+    this.ctx = null;
+    this.muted = false;
+    this.vol = 0.5;
+  }
+  _ensure() {
+    if (!this.ctx) this.ctx = new (window.AudioContext||window.webkitAudioContext)();
+    if (this.ctx.state==='suspended') this.ctx.resume();
+  }
+  play(type) {
+    if (this.muted) return;
+    this._ensure();
+    const now = this.ctx.currentTime;
+    const v = this.vol;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain); gain.connect(this.ctx.destination);
+    switch(type) {
+      case 'jump':
+        osc.frequency.setValueAtTime(280,now);
+        osc.frequency.exponentialRampToValueAtTime(620,now+0.1);
+        gain.gain.setValueAtTime(v*0.25,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.13);
+        osc.start(now); osc.stop(now+0.13);
+        break;
+      case 'orb':
+        osc.frequency.setValueAtTime(660,now);
+        osc.frequency.exponentialRampToValueAtTime(1320,now+0.08);
+        gain.gain.setValueAtTime(v*0.18,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.18);
+        osc.start(now); osc.stop(now+0.18);
+        break;
+      case 'combo':
+        osc.frequency.setValueAtTime(880,now);
+        osc.frequency.setValueAtTime(1100,now+0.07);
+        osc.frequency.setValueAtTime(1320,now+0.14);
+        gain.gain.setValueAtTime(v*0.2,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.25);
+        osc.start(now); osc.stop(now+0.25);
+        break;
+      case 'shockwave':
+        osc.type='sawtooth';
+        osc.frequency.setValueAtTime(120,now);
+        osc.frequency.exponentialRampToValueAtTime(30,now+0.3);
+        gain.gain.setValueAtTime(v*0.35,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.35);
+        osc.start(now); osc.stop(now+0.35);
+        break;
+      case 'hit':
+        osc.type='sawtooth';
+        osc.frequency.setValueAtTime(180,now);
+        osc.frequency.exponentialRampToValueAtTime(60,now+0.08);
+        gain.gain.setValueAtTime(v*0.3,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.12);
+        osc.start(now); osc.stop(now+0.12);
+        break;
+      case 'enemy_hit':
+        osc.type='square';
+        osc.frequency.setValueAtTime(100,now);
+        osc.frequency.exponentialRampToValueAtTime(30,now+0.15);
+        gain.gain.setValueAtTime(v*0.2,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.2);
+        osc.start(now); osc.stop(now+0.2);
+        break;
+      case 'die':
+        osc.frequency.setValueAtTime(400,now);
+        osc.frequency.exponentialRampToValueAtTime(80,now+0.6);
+        gain.gain.setValueAtTime(v*0.3,now);
+        gain.gain.exponentialRampToValueAtTime(0.001,now+0.7);
+        osc.start(now); osc.stop(now+0.7);
+        break;
+      case 'level_clear':
+        const notes=[523,659,784,1047];
+        notes.forEach((f,i)=>{
+          const o=this.ctx.createOscillator();
+          const g=this.ctx.createGain();
+          o.connect(g); g.connect(this.ctx.destination);
+          o.frequency.setValueAtTime(f,now+i*0.12);
+          g.gain.setValueAtTime(v*0.2,now+i*0.12);
+          g.gain.exponentialRampToValueAtTime(0.001,now+i*0.12+0.3);
+          o.start(now+i*0.12); o.stop(now+i*0.12+0.3);
+        });
+        break;
+      case 'game_complete':
+        [523,587,659,784,880,1047,1175,1319].forEach((f,i)=>{
+          const o=this.ctx.createOscillator();
+          const g=this.ctx.createGain();
+          o.connect(g); g.connect(this.ctx.destination);
+          o.frequency.setValueAtTime(f,now+i*0.1);
+          g.gain.setValueAtTime(v*0.15,now+i*0.1);
+          g.gain.exponentialRampToValueAtTime(0.001,now+i*0.1+0.4);
+          o.start(now+i*0.1); o.stop(now+i*0.1+0.4);
+        });
+        break;
+    }
+  }
+}
+
+// ============================================================
+// INPUT MANAGER
+// ============================================================
+class InputManager {
+  constructor() {
+    this.keys = {};
+    this.justPressed = {};
+    this.justReleased = {};
+    this.mouseDown = false;
+    this.mouseJustDown = false;
+    this.touchInput = { left:false, right:false, up:false, down:false, jump:false, gravL:false, gravR:false, attack:false };
+    this._bind();
+  }
+  _bind() {
+    window.addEventListener('keydown',e=>{
+      if(!this.keys[e.code]) this.justPressed[e.code]=true;
+      this.keys[e.code]=true;
+    });
+    window.addEventListener('keyup',e=>{
+      this.keys[e.code]=false;
+      this.justReleased[e.code]=true;
+    });
+    window.addEventListener('mousedown',e=>{
+      if(e.button===0) { this.mouseJustDown=true; this.mouseDown=true; }
+    });
+    window.addEventListener('mouseup',e=>{
+      if(e.button===0) this.mouseDown=false;
+    });
+    // Touch controls
+    document.querySelectorAll('.mctrl-btn').forEach(btn=>{
+      const key=btn.dataset.btn;
+      btn.addEventListener('touchstart',e=>{e.preventDefault(); this.touchInput[key]=true;});
+      btn.addEventListener('touchend',e=>{e.preventDefault(); this.touchInput[key]=false;});
+      btn.addEventListener('touchcancel',e=>{this.touchInput[key]=false;});
+      btn.addEventListener('mousedown',e=>{this.touchInput[key]=true;});
+      btn.addEventListener('mouseup',e=>{this.touchInput[key]=false;});
+      btn.addEventListener('mouseleave',e=>{this.touchInput[key]=false;});
+    });
+  }
+  isDown(code) { return !!this.keys[code]||!!this.touchInput[code]; }
+  isPressed(code) { return !!this.justPressed[code]; }
+  isReleased(code) { return !!this.justReleased[code]; }
+  clearFrame() { this.justPressed={}; this.justReleased={}; this.mouseJustDown=false; }
+  get left() { return this.isDown('ArrowLeft')||this.isDown('KeyA')||this.touchInput.left; }
+  get right() { return this.isDown('ArrowRight')||this.isDown('KeyD')||this.touchInput.right; }
+  get up() { return this.isDown('ArrowUp')||this.isDown('KeyW')||this.touchInput.up; }
+  get down() { return this.isDown('ArrowDown')||this.isDown('KeyS')||this.touchInput.down; }
+  get jump() { return this.isPressed('Space')||this.isPressed('ArrowUp')||this.isPressed('KeyW')||this.touchInput.jump; }
+  get gravCCW() { return this.isPressed('KeyQ')||this.touchInput.gravL; }
+  get gravCW() { return this.isPressed('KeyE')||this.touchInput.gravR; }
+  get attack() { return this.isPressed('KeyJ')||this.mouseJustDown||this.touchInput.attack; }
+}
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+class Particle {
+  constructor(x,y,color,opts={}) {
+    this.x=x; this.y=y;
+    this.vx=opts.vx||rand(-2,2); this.vy=opts.vy||rand(-2,2);
+    this.life=opts.life||1; this.maxLife=this.life;
+    this.decay=opts.decay||rand(0.015,0.035);
+    this.size=opts.size||rand(2,5);
+    this.color=color;
+    this.gravity=opts.gravity||0;
+  }
+  update(dt) {
+    this.x+=this.vx; this.y+=this.vy;
+    this.vy+=this.gravity*dt*60;
+    this.life-=this.decay;
+  }
+  get dead() { return this.life<=0; }
+  draw(ctx) {
+    ctx.globalAlpha=clamp(this.life,0,1);
+    ctx.fillStyle=this.color;
+    ctx.fillRect(this.x-this.size/2,this.y-this.size/2,this.size,this.size);
+    ctx.globalAlpha=1;
+  }
+}
+
+class ParticleSystem {
+  constructor() { this.particles=[]; }
+  emit(x,y,color,count=12,opts={}) {
+    for(let i=0;i<count;i++) this.particles.push(new Particle(x,y,color,opts));
+  }
+  emitBurst(x,y,colors,count=20,opts={}) {
+    for(let i=0;i<count;i++) this.particles.push(new Particle(x,y,colors[randInt(0,colors.length-1)],opts));
+  }
+  update(dt) {
+    for(let i=this.particles.length-1;i>=0;i--) {
+      this.particles[i].update(dt);
+      if(this.particles[i].dead) this.particles.splice(i,1);
+    }
+  }
+  draw(ctx) {
+    for(const p of this.particles) p.draw(ctx);
+  }
+}
+
+// ============================================================
+// BACKGROUND - Flowing Grid
+// ============================================================
+class GridBackground {
+  constructor() { this.phase=0; }
+  update(dt) { this.phase+=dt*0.6; }
+  draw(ctx, camX, camY, w, h, levelW, levelH) {
+    const gridSize=48;
+    const offsetX=camX*0.15;
+    const offsetY=camY*0.15;
+    ctx.strokeStyle=COLORS.grid;
+    ctx.lineWidth=1;
+    // Vertical lines
+    const startX=-(offsetX%gridSize);
+    for(let x=startX;x<w+gridSize;x+=gridSize) {
+      const flow=Math.sin(this.phase+x*0.008+offsetY*0.005)*6;
+      ctx.beginPath();
+      ctx.moveTo(x,0);
+      ctx.lineTo(x+flow,h);
+      ctx.stroke();
+    }
+    // Horizontal lines
+    const startY=-(offsetY%gridSize);
+    for(let y=startY;y<h+gridSize;y+=gridSize) {
+      const flow=Math.sin(this.phase*0.7+y*0.008+offsetX*0.005)*6;
+      ctx.beginPath();
+      ctx.moveTo(0,y);
+      ctx.lineTo(w+flow,y);
+      ctx.stroke();
+    }
+    // Brighter moving accent lines
+    ctx.strokeStyle=COLORS.gridFlow;
+    for(let i=-2;i<3;i++) {
+      const x=(Math.sin(this.phase*0.3+i)*0.5+0.5)*(w+gridSize)-offsetX%(gridSize*3);
+      ctx.beginPath();
+      ctx.moveTo(x,0);
+      ctx.quadraticCurveTo(x+Math.sin(this.phase+i)*20,h*0.5,x+Math.sin(this.phase*0.7+i)*15,h);
+      ctx.stroke();
+    }
+  }
+}
+
+// ============================================================
+// GAME OBJECTS
+// ============================================================
+
+class Player {
+  constructor(x,y) {
+    this.x=x; this.y=y;
+    this.w=CONFIG.PLAYER_W; this.h=CONFIG.PLAYER_H;
+    this.vx=0; this.vy=0;
+    this.gravityDir=0;
+    this.grounded=false;
+    this.alive=true;
+    this.coyoteTimer=0;
+    this.jumpBufferTimer=0;
+    this.jumpHeld=false;
+    this.shockwaveCooldown=0;
+    this.facing=1;
+    this.glowPulse=0;
+  }
+
+  get cx() { return this.x+this.w/2; }
+  get cy() { return this.y+this.h/2; }
+
+  reset(x,y) {
+    this.x=x; this.y=y;
+    this.vx=0; this.vy=0;
+    this.gravityDir=0;
+    this.grounded=false;
+    this.alive=true;
+    this.coyoteTimer=0;
+    this.jumpBufferTimer=0;
+    this.jumpHeld=false;
+  }
+
+  update(dt, input, platforms) {
+    if(!this.alive) return;
+    this.glowPulse+=dt*3;
+    if(this.shockwaveCooldown>0) this.shockwaveCooldown-=dt;
+
+    const gc=GRAVITY_CFG[this.gravityDir];
+    const gravScale=1;
+    const isVert=this.gravityDir===0||this.gravityDir===2;
+
+    // Apply gravity
+    this.vx+=gc.gx*CONFIG.GRAVITY*gravScale*dt;
+    this.vy+=gc.gy*CONFIG.GRAVITY*gravScale*dt;
+
+    // Apply movement (along surface)
+    let moveInput=0;
+    if(input.left) moveInput=-1;
+    if(input.right) moveInput=1;
+    if(moveInput!==0) {
+      this.vx+=gc.perpX*moveInput*CONFIG.ACCEL*dt;
+      this.vy+=gc.perpY*moveInput*CONFIG.ACCEL*dt;
+    } else {
+      // Deceleration along movement axis
+      const mv=this.vx*gc.perpX+this.vy*gc.perpY;
+      if(Math.abs(mv)>CONFIG.DECEL*dt) {
+        const decelX=gc.perpX*Math.sign(mv)*CONFIG.DECEL*dt;
+        const decelY=gc.perpY*Math.sign(mv)*CONFIG.DECEL*dt;
+        this.vx-=decelX; this.vy-=decelY;
+      } else {
+        const perpLen=Math.abs(this.vx*gc.perpX+this.vy*gc.perpY);
+        if(perpLen<CONFIG.DECEL*dt) {
+          this.vx-=gc.perpX*(this.vx*gc.perpX);
+          this.vy-=gc.perpY*(this.vy*gc.perpY);
+        }
+      }
+    }
+
+    // Clamp speed along movement axis
+    const moveSpeed=Math.abs(this.vx*gc.perpX+this.vy*gc.perpY);
+    if(moveSpeed>CONFIG.MAX_SPEED) {
+      const ratio=CONFIG.MAX_SPEED/moveSpeed;
+      this.vx-=(this.vx*gc.perpX)*(1-ratio)*gc.perpX;
+      this.vy-=(this.vy*gc.perpY)*(1-ratio)*gc.perpY;
+    }
+
+    // Coyote time
+    if(this.grounded) this.coyoteTimer=CONFIG.COYOTE_TIME;
+    else this.coyoteTimer-=dt;
+
+    // Jump buffer
+    if(input.jump) this.jumpBufferTimer=CONFIG.JUMP_BUFFER;
+    else this.jumpBufferTimer-=dt;
+
+    // Jump
+    if(this.jumpBufferTimer>0 && this.coyoteTimer>0) {
+      const jx=-gc.gx*CONFIG.JUMP_FORCE;
+      const jy=-gc.gy*CONFIG.JUMP_FORCE;
+      this.vx+=jx; this.vy+=jy;
+      this.grounded=false;
+      this.coyoteTimer=0;
+      this.jumpBufferTimer=0;
+      this.jumpHeld=true;
+      return 'jump';
+    }
+
+    // Variable jump height
+    if(!input.isDown('Space')&&!input.isDown('ArrowUp')&&!input.isDown('KeyW')&&
+       !input.touchInput.jump && this.jumpHeld && (
+       (this.gravityDir===0&&this.vy<0)||
+       (this.gravityDir===2&&this.vy>0)||
+       (this.gravityDir===1&&this.vx>0)||
+       (this.gravityDir===3&&this.vx<0))) {
+      const cut=isVert?0.5:0.5;
+      if(isVert) this.vy*=cut; else this.vx*=cut;
+      this.jumpHeld=false;
+    }
+
+    // Set facing
+    if(moveInput!==0) this.facing=moveInput;
+
+    // Collision resolution
+    this.grounded=false;
+    // Move gravity axis first
+    if(isVert) {
+      this.y+=this.vy*dt;
+      this._resolveVert(platforms);
+      this.x+=this.vx*dt;
+      this._resolveHoriz(platforms);
+    } else {
+      this.x+=this.vx*dt;
+      this._resolveHoriz(platforms);
+      this.y+=this.vy*dt;
+      this._resolveVert(platforms);
+    }
+
+    // Cap terminal velocity
+    const maxFall=600;
+    if(isVert) { this.vy=clamp(this.vy,-maxFall,maxFall); }
+    else { this.vx=clamp(this.vx,-maxFall,maxFall); }
+  }
+
+  _resolveVert(platforms) {
+    for(const p of platforms) {
+      if(!AABB(this,p)) continue;
+      if(this.vy>0) {
+        this.y=p.y-this.h; this.vy=0;
+        if(this.gravityDir===0) this.grounded=true;
+      } else if(this.vy<0) {
+        this.y=p.y+p.h; this.vy=0;
+        if(this.gravityDir===2) this.grounded=true;
+      }
+    }
+  }
+
+  _resolveHoriz(platforms) {
+    for(const p of platforms) {
+      if(!AABB(this,p)) continue;
+      if(this.vx>0) {
+        this.x=p.x-this.w; this.vx=0;
+        if(this.gravityDir===3) this.grounded=true;
+      } else if(this.vx<0) {
+        this.x=p.x+p.w; this.vx=0;
+        if(this.gravityDir===1) this.grounded=true;
+      }
+    }
+  }
+
+  canAttack() { return this.shockwaveCooldown<=0&&this.alive; }
+
+  draw(ctx, time) {
+    if(!this.alive) return;
+    const gc=GRAVITY_CFG[this.gravityDir];
+    const cx=this.x+this.w/2;
+    const cy=this.y+this.h/2;
+    const r=14;
+    // Triangle points opposite to gravity
+    const tipX=cx-gc.gx*r;
+    const tipY=cy-gc.gy*r;
+    const perpX=-gc.gy*r*0.7;
+    const perpY=gc.gx*r*0.7;
+    const b1x=cx+gc.gx*r*0.4+perpX;
+    const b1y=cy+gc.gy*r*0.4+perpY;
+    const b2x=cx+gc.gx*r*0.4-perpX;
+    const b2y=cy+gc.gy*r*0.4-perpY;
+
+    // Glow
+    ctx.save();
+    ctx.shadowColor=COLORS.playerGlow;
+    ctx.shadowBlur=18+Math.sin(this.glowPulse)*6;
+    ctx.fillStyle=COLORS.player;
+    ctx.beginPath();
+    ctx.moveTo(tipX,tipY);
+    ctx.lineTo(b1x,b1y);
+    ctx.lineTo(b2x,b2y);
+    ctx.closePath();
+    ctx.fill();
+    // Inner bright triangle
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#ff8c5a';
+    ctx.beginPath();
+    ctx.moveTo(tipX-gc.gx*2,tipY-gc.gy*2);
+    ctx.lineTo(b1x-gc.gx*1,b1y-gc.gy*1);
+    ctx.lineTo(b2x-gc.gx*1,b2y-gc.gy*1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class Platform {
+  constructor(x,y,w,h,type='static') {
+    this.x=x; this.y=y; this.w=w; this.h=h;
+    this.type=type;
+  }
+  draw(ctx, camX, camY) {
+    const sx=Math.round(this.x-camX), sy=Math.round(this.y-camY);
+    ctx.fillStyle=COLORS.platform;
+    ctx.fillRect(sx,sy,this.w,this.h);
+    ctx.strokeStyle=COLORS.platformBorder;
+    ctx.lineWidth=1.5;
+    ctx.strokeRect(sx,sy,this.w,this.h);
+    // Diagonal accent lines
+    ctx.strokeStyle='rgba(231,76,60,0.15)';
+    ctx.lineWidth=1;
+    for(let i=0;i<this.w;i+=12) {
+      ctx.beginPath();
+      ctx.moveTo(sx+i,sy);
+      ctx.lineTo(sx+i+8,sy+this.h);
+      ctx.stroke();
+    }
+  }
+}
+
+class Orb {
+  constructor(x,y,colorIdx) {
+    this.x=x; this.y=y;
+    this.r=8;
+    this.colorIdx=colorIdx||randInt(0,COLORS.orb.length-1);
+    this.collected=false;
+    this.bobPhase=rand(0,Math.PI*2);
+    this.glowPhase=rand(0,Math.PI*2);
+  }
+  update(dt,time) {
+    this.bobPhase+=dt*3;
+    this.glowPhase+=dt*2;
+  }
+  get bobY() { return Math.sin(this.bobPhase)*4; }
+  draw(ctx, camX, camY) {
+    if(this.collected) return;
+    const sx=this.x-camX, sy=this.y-camY+this.bobY;
+    const screenY=this.y-camY+this.bobY;
+    const color=COLORS.orb[this.colorIdx];
+    // Glow
+    ctx.save();
+    ctx.shadowColor=color;
+    ctx.shadowBlur=12+Math.sin(this.glowPhase)*4;
+    ctx.fillStyle=color;
+    ctx.beginPath();
+    ctx.arc(sx,screenY,this.r,0,Math.PI*2);
+    ctx.fill();
+    // Inner bright spot
+    ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.arc(sx-2,screenY-2,this.r*0.35,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+  checkCollect(px,py,pw,ph) {
+    if(this.collected) return false;
+    const cx=this.x, cy=this.y+Math.sin(this.bobPhase)*4;
+    const pcx=px+pw/2, pcy=py+ph/2;
+    return Math.hypot(cx-pcx,cy-pcy)<this.r+16;
+  }
+}
+
+class Enemy {
+  constructor(x,y,opts={}) {
+    this.x=x; this.y=y;
+    this.w=28; this.h=28;
+    this.speed=opts.speed||rand(40,70);
+    this.range=opts.range||rand(80,160);
+    this.startX=x;
+    this.vx=this.speed;
+    this.vy=0;
+    this.alive=true;
+    this.hitFlash=0;
+    this.bobPhase=rand(0,Math.PI*2);
+    this.flying=opts.flying||false;
+    this.flyY=y;
+  }
+  update(dt, time, platforms) {
+    if(!this.alive) return;
+    this.bobPhase+=dt*2;
+    if(this.hitFlash>0) this.hitFlash-=dt*4;
+    if(this.flying) {
+      this.x+=this.vx*dt;
+      this.y=this.flyY+Math.sin(time*2+this.bobPhase)*20;
+      if(this.x<this.startX-this.range) { this.x=this.startX-this.range; this.vx=-this.vx; }
+      if(this.x>this.startX+this.range) { this.x=this.startX+this.range; this.vx=-this.vx; }
+    } else {
+      // Ground patrolling with gravity consideration
+      this.x+=this.vx*dt;
+      if(this.x<this.startX-this.range) { this.x=this.startX-this.range; this.vx=-this.vx; }
+      if(this.x>this.startX+this.range) { this.x=this.startX+this.range; this.vx=-this.vx; }
+      // Simple gravity for ground enemies
+      this.vy+=900*dt;
+      this.y+=this.vy*dt;
+      for(const p of platforms) {
+        if(AABB(this,p)&&this.vy>0) {
+          this.y=p.y-this.h; this.vy=0;
+        }
+      }
+    }
+  }
+  draw(ctx, camX, camY) {
+    if(!this.alive) return;
+    const sx=Math.round(this.x-camX), sy=Math.round(this.y-camY);
+    ctx.save();
+    if(this.hitFlash>0) ctx.globalAlpha=0.5+Math.sin(this.hitFlash*20)*0.5;
+    // Draw as red geometric shape (diamond)
+    ctx.fillStyle=COLORS.enemy;
+    ctx.beginPath();
+    ctx.moveTo(sx+this.w/2,sy);
+    ctx.lineTo(sx+this.w,sy+this.h/2);
+    ctx.lineTo(sx+this.w/2,sy+this.h);
+    ctx.lineTo(sx,sy+this.h/2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle='#ff6b6b';
+    ctx.lineWidth=1.5;
+    ctx.stroke();
+    // Eyes
+    ctx.fillStyle='#fff';
+    ctx.beginPath();
+    ctx.arc(sx+this.w*0.35,sy+this.h*0.4,3,0,Math.PI*2);
+    ctx.arc(sx+this.w*0.65,sy+this.h*0.4,3,0,Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle='#000';
+    ctx.beginPath();
+    ctx.arc(sx+this.w*0.35+(this.vx>0?1:-1),sy+this.h*0.4,1.5,0,Math.PI*2);
+    ctx.arc(sx+this.w*0.65+(this.vx>0?1:-1),sy+this.h*0.4,1.5,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+  checkCollide(px,py,pw,ph) {
+    if(!this.alive) return false;
+    return AABB({x:px,y:py,w:pw,h:ph},this);
+  }
+  takeDamage() { this.alive=false; }
+  knockback(dir) {
+    this.vx+=dir*300; this.alive=false;
+  }
+}
+
+class Spike {
+  constructor(x,y,w,h,dir) {
+    this.x=x; this.y=y; this.w=w; this.h=h;
+    this.dir=dir||0; // 0=up, 1=right, 2=down, 3=left (danger direction)
+  }
+  // The visual extends in the danger direction from (x,y)
+  // For dir=0: spike covers from y-h (tip) to y (base on platform)
+  _getBounds() {
+    switch(this.dir) {
+      case 0: return {x:this.x, y:this.y-this.h, w:this.w, h:this.h};
+      case 2: return {x:this.x, y:this.y, w:this.w, h:this.h};
+      case 1: return {x:this.x, y:this.y, w:this.h, h:this.w};
+      case 3: return {x:this.x-this.h, y:this.y, w:this.h, h:this.w};
+      default: return {x:this.x, y:this.y-this.h, w:this.w, h:this.h};
+    }
+  }
+  draw(ctx, camX, camY) {
+    const b=this._getBounds();
+    const sx=Math.round(b.x-camX), sy=Math.round(b.y-camY);
+    const seg=Math.max(2,Math.floor(this.w/12));
+    const segW=this.w/seg;
+    ctx.fillStyle=COLORS.spike;
+    for(let i=0;i<seg;i++) {
+      const x=sx+i*segW;
+      ctx.beginPath();
+      switch(this.dir) {
+        case 0: // up: base at b.y+b.h, tip at b.y
+          ctx.moveTo(x, sy+this.h);
+          ctx.lineTo(x+segW/2, sy);
+          ctx.lineTo(x+segW, sy+this.h);
+          break;
+        case 2: // down: base at b.y, tip at b.y+b.h
+          ctx.moveTo(x+segW/2, sy+this.h);
+          ctx.lineTo(x, sy);
+          ctx.lineTo(x+segW, sy);
+          break;
+        case 1: // right: base at b.x, tip at b.x+b.w
+          ctx.moveTo(sx, sy+i*segW);
+          ctx.lineTo(sx+this.h, sy+i*segW+segW/2);
+          ctx.lineTo(sx, sy+(i+1)*segW);
+          break;
+        case 3: // left: base at b.x+b.w, tip at b.x
+          ctx.moveTo(sx+this.h, sy+i*segW);
+          ctx.lineTo(sx, sy+i*segW+segW/2);
+          ctx.lineTo(sx+this.h, sy+(i+1)*segW);
+          break;
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Base line for up-pointing spikes
+    if(this.dir===0) {
+      ctx.strokeStyle='rgba(231,76,60,0.3)';
+      ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.moveTo(sx,sy+this.h);
+      ctx.lineTo(sx+this.w,sy+this.h);
+      ctx.stroke();
+    }
+  }
+  checkCollide(px,py,pw,ph) {
+    const b=this._getBounds();
+    // Add 6px buffer in the danger direction
+    switch(this.dir) {
+      case 0: b.y-=6; b.h+=6; break;
+      case 2: b.h+=6; break;
+      case 1: b.w+=6; break;
+      case 3: b.x-=6; b.w+=6; break;
+    }
+    return AABB({x:px,y:py,w:pw,h:ph},b);
+  }
+}
+
+class Shockwave {
+  constructor(x,y,dir) {
+    this.x=x; this.y=y;
+    this.radius=10;
+    this.maxRadius=CONFIG.SHOCKWAVE_MAX_RADIUS;
+    this.speed=CONFIG.SHOCKWAVE_SPEED;
+    this.active=true;
+    this.dir=dir;
+    this.hitEntities=new Set();
+  }
+  update(dt) {
+    if(!this.active) return;
+    this.radius+=this.speed*dt;
+    if(this.radius>=this.maxRadius) this.active=false;
+  }
+  draw(ctx, camX, camY) {
+    if(!this.active) return;
+    const sx=this.x-camX, sy=this.y-camY;
+    const progress=this.radius/this.maxRadius;
+    ctx.save();
+    ctx.shadowColor='rgba(255,50,50,0.5)';
+    ctx.shadowBlur=20*(1-progress)+5;
+    ctx.strokeStyle=`rgba(255,50,50,${1-progress})`;
+    ctx.lineWidth=4*(1-progress)+1;
+    ctx.beginPath();
+    ctx.arc(sx,sy,this.radius,0,Math.PI*2);
+    ctx.stroke();
+    // Inner ring
+    ctx.strokeStyle=`rgba(255,255,255,${0.3*(1-progress)})`;
+    ctx.lineWidth=2*(1-progress);
+    ctx.beginPath();
+    ctx.arc(sx,sy,this.radius*0.7,0,Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  hitTest(entity) {
+    if(!this.active) return false;
+    if(this.hitEntities.has(entity)) return false;
+    const ex=entity.x+entity.w/2, ey=entity.y+entity.h/2;
+    const d=Math.hypot(ex-this.x,ey-this.y);
+    if(d<this.radius+Math.max(entity.w,entity.h)/2) {
+      this.hitEntities.add(entity);
+      return true;
+    }
+    return false;
+  }
+}
+
+class Portal {
+  constructor(x,y) {
+    this.x=x; this.y=y;
+    this.w=32; this.h=48;
+    this.phase=0;
+  }
+  update(dt) { this.phase+=dt*2; }
+  draw(ctx, camX, camY) {
+    const sx=Math.round(this.x-camX), sy=Math.round(this.y-camY);
+    const pulse=Math.sin(this.phase)*0.3+0.7;
+    // Outer glow
+    ctx.save();
+    ctx.shadowColor=COLORS.portalGlow;
+    ctx.shadowBlur=25*pulse;
+    ctx.fillStyle='rgba(255,255,255,0.08)';
+    ctx.fillRect(sx-6,sy-6,this.w+12,this.h+12);
+    // Portal body
+    ctx.fillStyle=COLORS.portal;
+    ctx.fillRect(sx,sy,this.w,this.h);
+    // Inner pattern
+    ctx.fillStyle=`rgba(231,76,60,${0.15*pulse})`;
+    ctx.fillRect(sx+4,sy+4,this.w-8,this.h-8);
+    // Center symbol
+    ctx.strokeStyle=`rgba(231,76,60,${pulse})`;
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.arc(sx+this.w/2,sy+this.h/2,8,0,Math.PI*2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(sx+this.w/2,sy+12);
+    ctx.lineTo(sx+this.w/2,sy+this.h-12);
+    ctx.stroke();
+    ctx.restore();
+  }
+  checkReach(px,py,pw,ph) {
+    return AABB({x:px,y:py,w:pw,h:ph},{x:this.x-4,y:this.y-4,w:this.w+8,h:this.h+8});
+  }
+}
+
+// ============================================================
+// LEVEL GENERATOR - 12 unique levels
+// ============================================================
+function generateLevel(num) {
+  const levels=[
+    // Level 1 - Introduction
+    {
+      name:'初次接触', width:1200, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:250,h:24},{x:300,y:480,w:100,h:20},{x:450,y:420,w:100,h:20},
+        {x:600,y:480,w:100,h:20},{x:750,y:420,w:80,h:20},{x:880,y:460,w:80,h:20},
+        {x:1000,y:480,w:100,h:20},{x:1150,y:500,w:50,h:60},
+      ],
+      orbs:[{x:350,y:456},{x:500,y:396},{x:650,y:456},{x:800,y:396},{x:920,y:436}],
+      enemies:[],spikes:[],portal:{x:1165,y:460}
+    },
+    // Level 2 - Gravity Introduction
+    {
+      name:'重力转换', width:1400, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:200,h:24},{x:250,y:500,w:80,h:20},{x:380,y:440,w:80,h:20},
+        {x:520,y:380,w:100,h:20},{x:680,y:440,w:80,h:20},{x:810,y:380,w:80,h:20},
+        {x:940,y:320,w:100,h:20},{x:1100,y:380,w:80,h:20},{x:1230,y:420,w:80,h:20},
+        {x:1350,y:480,w:80,h:60},
+        // Ceiling platform (reachable with gravity UP)
+        {x:600,y:100,w:120,h:20},
+        // Wall platforms (reachable with gravity LEFT/RIGHT)
+        {x:940,y:440,w:20,h:60},{x:940,y:240,w:20,h:60},
+      ],
+      orbs:[{x:300,y:476},{x:420,y:416},{x:570,y:356},{x:730,y:416},
+            {x:650,y:76},{x:950,y:300},{x:1070,y:356},{x:1270,y:396}],
+      enemies:[],spikes:[],portal:{x:1365,y:420}
+    },
+    // Level 3 - First enemies
+    {
+      name:'危险初现', width:1600, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:250,h:24},{x:320,y:500,w:100,h:20},{x:480,y:440,w:100,h:20},
+        {x:640,y:500,w:100,h:20},{x:800,y:440,w:100,h:20},{x:960,y:380,w:100,h:20},
+        {x:1120,y:440,w:80,h:20},{x:1260,y:380,w:100,h:20},{x:1420,y:440,w:80,h:20},
+        {x:1550,y:500,w:80,h:60},
+        {x:400,y:120,w:120,h:20},{x:800,y:120,w:80,h:20},{x:1200,y:120,w:100,h:20},
+      ],
+      orbs:[{x:370,y:476},{x:530,y:416},{x:690,y:476},{x:850,y:416},{x:1010,y:356},
+            {x:1170,y:416},{x:1310,y:356},{x:1460,y:416},{x:450,y:96},{x:1240,y:96}],
+      enemies:[
+        {x:500,y:460,speed:50,range:100},{x:1000,y:340,speed:60,range:120},
+      ],
+      spikes:[],portal:{x:1565,y:440}
+    },
+    // Level 4 - Spikes introduced
+    {
+      name:'尖刺陷阱', width:1700, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:200,h:24},{x:280,y:520,w:100,h:20},{x:440,y:460,w:100,h:20},
+        {x:600,y:400,w:100,h:20},{x:760,y:460,w:100,h:20},{x:920,y:400,w:100,h:20},
+        {x:1080,y:340,w:100,h:20},{x:1240,y:400,w:80,h:20},{x:1380,y:340,w:100,h:20},
+        {x:1540,y:400,w:80,h:20},{x:1660,y:480,w:80,h:60},
+        {x:500,y:120,w:120,h:20},{x:1000,y:120,w:120,h:20},{x:1400,y:120,w:80,h:20},
+      ],
+      spikes:[
+        {x:280,y:520,w:100,dir:0,fix:true},{x:600,y:400,w:100,dir:0,fix:true},
+        {x:920,y:400,w:100,dir:0,fix:true},
+      ],
+      orbs:[{x:330,y:496},{x:490,y:436},{x:650,y:376},{x:810,y:436},{x:970,y:376},
+            {x:1130,y:316},{x:1290,y:376},{x:1430,y:316},{x:1580,y:376}],
+      enemies:[{x:760,y:420,speed:55,range:100}],
+      portal:{x:1675,y:420}
+    },
+    // Level 5 - Multi-gravity puzzles
+    {
+      name:'四方引力', width:1800, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:200,h:24},{x:280,y:520,w:80,h:20},{x:420,y:460,w:80,h:20},
+        {x:560,y:400,w:80,h:20},{x:700,y:340,w:80,h:20},{x:840,y:280,w:100,h:20},
+        {x:1000,y:340,w:80,h:20},{x:1140,y:280,w:80,h:20},{x:1280,y:340,w:80,h:20},
+        {x:1420,y:400,w:80,h:20},{x:1560,y:460,w:80,h:20},{x:1700,y:520,w:80,h:60},
+        // Wall and ceiling platforms
+        {x:560,y:180,w:20,h:80},{x:700,y:180,w:20,h:80},{x:1140,y:180,w:20,h:80},
+        {x:1280,y:180,w:20,h:80},
+        {x:840,y:80,w:100,h:20},
+      ],
+      orbs:[{x:320,y:496},{x:460,y:436},{x:600,y:376},{x:740,y:316},{x:890,y:256},
+            {x:1040,y:316},{x:1180,y:256},{x:1320,y:316},{x:1460,y:376},{x:1600,y:436},
+            {x:575,y:200},{x:1300,y:200},{x:890,y:56}],
+      enemies:[{x:500,y:480,speed:50,range:80},{x:1200,y:300,speed:60,range:100}],
+      spikes:[
+        {x:280,y:520,w:80,dir:0,fix:true},{x:700,y:340,w:80,dir:0,fix:true},
+        {x:1280,y:340,w:80,dir:0,fix:true},
+      ],
+      portal:{x:1715,y:460}
+    },
+    // Level 6 - Vertical challenge
+    {
+      name:'垂直极限', width:1900, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:180,h:24},{x:240,y:500,w:80,h:20},{x:380,y:440,w:80,h:20},
+        {x:520,y:380,w:80,h:20},{x:660,y:320,w:80,h:20},{x:800,y:260,w:80,h:20},
+        {x:940,y:200,w:80,h:20},{x:1080,y:260,w:80,h:20},{x:1220,y:320,w:80,h:20},
+        {x:1360,y:380,w:80,h:20},{x:1500,y:440,w:80,h:20},{x:1640,y:500,w:80,h:20},
+        {x:1780,y:540,w:80,h:60},
+        // Ceiling path (requires gravity UP)
+        {x:400,y:80,w:100,h:20},{x:800,y:80,w:100,h:20},{x:1200,y:80,w:100,h:20},{x:1600,y:80,w:100,h:20},
+      ],
+      orbs:[
+        {x:280,y:476},{x:420,y:416},{x:560,y:356},{x:700,y:296},{x:840,y:236},
+        {x:980,y:176},{x:1120,y:236},{x:1260,y:296},{x:1400,y:356},{x:1540,y:416},
+        {x:1680,y:476},{x:450,y:56},{x:850,y:56},{x:1250,y:56},{x:1650,y:56},
+      ],
+      enemies:[
+        {x:660,y:280,speed:50,range:80},{x:1220,y:280,speed:55,range:80},
+        {x:500,y:50,flying:true,speed:40,range:100},
+      ],
+      spikes:[
+        {x:520,y:380,w:80,dir:0,fix:true},{x:1080,y:260,w:80,dir:0,fix:true},
+        {x:1500,y:440,w:80,dir:0,fix:true},
+      ],
+      portal:{x:1795,y:480}
+    },
+    // Level 7 - Enemies + spikes gauntlet
+    {
+      name:'重力试炼', width:2000, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:200,h:24},{x:280,y:500,w:80,h:20},{x:420,y:440,w:80,h:20},
+        {x:560,y:500,w:80,h:20},{x:700,y:440,w:80,h:20},{x:840,y:380,w:80,h:20},
+        {x:980,y:320,w:80,h:20},{x:1120,y:380,w:80,h:20},{x:1260,y:320,w:80,h:20},
+        {x:1400,y:260,w:80,h:20},{x:1540,y:320,w:80,h:20},{x:1680,y:380,w:80,h:20},
+        {x:1820,y:440,w:80,h:20},{x:1960,y:500,w:80,h:60},
+        // Alternate paths
+        {x:700,y:120,w:80,h:20},{x:1260,y:120,w:80,h:20},{x:1680,y:120,w:80,h:20},
+        {x:420,y:280,w:20,h:80},{x:980,y:200,w:20,h:80},{x:1400,y:160,w:20,h:60},
+      ],
+      orbs:[
+        {x:320,y:476},{x:460,y:416},{x:600,y:476},{x:740,y:416},{x:880,y:356},
+        {x:1020,y:296},{x:1160,y:356},{x:1300,y:296},{x:1440,y:236},{x:1580,y:296},
+        {x:1720,y:356},{x:1860,y:416},{x:740,y:96},{x:1300,y:96},{x:1720,y:96},
+      ],
+      enemies:[
+        {x:420,y:400,speed:60,range:80},{x:840,y:340,speed:55,range:100},
+        {x:1260,y:280,speed:65,range:80},{x:1540,y:280,speed:50,range:100},
+        {x:840,y:100,flying:true,speed:50,range:80},
+      ],
+      spikes:[
+        {x:560,y:500,w:80,dir:0,fix:true},{x:980,y:320,w:80,dir:0,fix:true},
+        {x:1400,y:260,w:80,dir:0,fix:true},{x:1820,y:440,w:80,dir:0,fix:true},
+      ],
+      portal:{x:1975,y:440}
+    },
+    // Level 8 - Tight corridors
+    {
+      name:'狭路相逢', width:2000, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:150,h:24},{x:200,y:500,w:60,h:20},{x:310,y:440,w:60,h:20},
+        {x:420,y:500,w:60,h:20},{x:530,y:440,w:60,h:20},{x:640,y:380,w:60,h:20},
+        {x:750,y:320,w:60,h:20},{x:860,y:380,w:60,h:20},{x:970,y:320,w:60,h:20},
+        {x:1080,y:260,w:60,h:20},{x:1190,y:320,w:60,h:20},{x:1300,y:260,w:60,h:20},
+        {x:1410,y:200,w:60,h:20},{x:1520,y:260,w:60,h:20},{x:1630,y:320,w:60,h:20},
+        {x:1740,y:380,w:60,h:20},{x:1850,y:440,w:60,h:20},{x:1960,y:500,w:80,h:60},
+        // Ceiling path
+        {x:400,y:80,w:80,h:20},{x:900,y:80,w:80,h:20},{x:1400,y:80,w:80,h:20},
+        {x:1850,y:80,w:80,h:20},
+      ],
+      orbs:[
+        {x:240,y:476},{x:350,y:416},{x:460,y:476},{x:570,y:416},{x:680,y:356},
+        {x:790,y:296},{x:900,y:356},{x:1010,y:296},{x:1120,y:236},{x:1230,y:296},
+        {x:1340,y:236},{x:1450,y:176},{x:1560,y:236},{x:1670,y:296},{x:1780,y:356},
+        {x:1890,y:416},{x:450,y:56},{x:950,y:56},{x:1450,y:56},{x:1890,y:56},
+      ],
+      enemies:[
+        {x:530,y:400,speed:50,range:60},{x:970,y:280,speed:55,range:60},
+        {x:1410,y:160,speed:60,range:60},{x:1630,y:280,speed:50,range:60},
+        {x:600,y:60,flying:true,speed:40,range:80},{x:1500,y:60,flying:true,speed:45,range:80},
+      ],
+      spikes:[
+        {x:310,y:440,w:60,dir:0,fix:true},{x:750,y:320,w:60,dir:0,fix:true},
+        {x:1190,y:320,w:60,dir:0,fix:true},{x:1630,y:320,w:60,dir:0,fix:true},
+      ],
+      portal:{x:1975,y:440}
+    },
+    // Level 9 - Speed run challenge
+    {
+      name:'争分夺秒', width:2200, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:160,h:24},{x:220,y:500,w:80,h:20},{x:360,y:440,w:80,h:20},
+        {x:500,y:380,w:80,h:20},{x:640,y:320,w:80,h:20},{x:780,y:260,w:80,h:20},
+        {x:920,y:200,w:80,h:20},{x:1060,y:260,w:80,h:20},{x:1200,y:320,w:80,h:20},
+        {x:1340,y:260,w:80,h:20},{x:1480,y:320,w:80,h:20},{x:1620,y:380,w:80,h:20},
+        {x:1760,y:440,w:80,h:20},{x:1900,y:500,w:80,h:20},{x:2040,y:540,w:80,h:20},
+        {x:2160,y:520,w:80,h:60},
+        {x:780,y:80,w:80,h:20},{x:1480,y:80,w:80,h:20},
+      ],
+      orbs:[
+        {x:260,y:476},{x:400,y:416},{x:540,y:356},{x:680,y:296},{x:820,y:236},
+        {x:960,y:176},{x:1100,y:236},{x:1240,y:296},{x:1380,y:236},{x:1520,y:296},
+        {x:1660,y:356},{x:1800,y:416},{x:1940,y:476},{x:820,y:56},{x:1520,y:56},
+        {x:2080,y:516},{x:2120,y:516},
+      ],
+      enemies:[
+        {x:500,y:340,speed:70,range:100},{x:920,y:160,speed:75,range:80},
+        {x:1340,y:220,speed:65,range:80},{x:1760,y:400,speed:70,range:100},
+        {x:500,y:60,flying:true,speed:55,range:100},{x:1600,y:60,flying:true,speed:60,range:100},
+      ],
+      spikes:[
+        {x:360,y:440,w:80,dir:0,fix:true},{x:780,y:260,w:80,dir:0,fix:true},
+        {x:1200,y:320,w:80,dir:0,fix:true},{x:1620,y:380,w:80,dir:0,fix:true},
+        {x:1900,y:500,w:80,dir:0,fix:true},
+      ],
+      portal:{x:2175,y:460}
+    },
+    // Level 10 - Complex multi-path
+    {
+      name:'迷宫引力', width:2400, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:160,h:24},{x:220,y:520,w:70,h:20},{x:340,y:460,w:70,h:20},
+        {x:460,y:520,w:70,h:20},{x:580,y:460,w:70,h:20},{x:700,y:400,w:70,h:20},
+        {x:820,y:340,w:70,h:20},{x:940,y:280,w:70,h:20},{x:1060,y:340,w:70,h:20},
+        {x:1180,y:280,w:70,h:20},{x:1300,y:220,w:70,h:20},{x:1420,y:280,w:70,h:20},
+        {x:1540,y:340,w:70,h:20},{x:1660,y:280,w:70,h:20},{x:1780,y:340,w:70,h:20},
+        {x:1900,y:400,w:70,h:20},{x:2020,y:460,w:70,h:20},{x:2140,y:520,w:70,h:20},
+        {x:2260,y:540,w:80,h:60},
+        // Multiple ceiling and wall paths
+        {x:580,y:80,w:100,h:20},{x:1060,y:80,w:100,h:20},{x:1540,y:80,w:100,h:20},{x:2020,y:80,w:100,h:20},
+        {x:340,y:300,w:20,h:80},{x:820,y:220,w:20,h:60},{x:1300,y:140,w:20,h:60},{x:1780,y:220,w:20,h:60},
+      ],
+      orbs:[
+        {x:260,y:496},{x:380,y:436},{x:500,y:496},{x:620,y:436},{x:740,y:376},
+        {x:860,y:316},{x:980,y:256},{x:1100,y:316},{x:1220,y:256},{x:1340,y:196},
+        {x:1460,y:256},{x:1580,y:316},{x:1700,y:256},{x:1820,y:316},{x:1940,y:376},
+        {x:2060,y:436},{x:2180,y:496},{x:630,y:56},{x:1110,y:56},{x:1590,y:56},{x:2070,y:56},
+        {x:355,y:320},{x:1300,y:160},
+      ],
+      enemies:[
+        {x:580,y:420,speed:60,range:80},{x:1060,y:300,speed:65,range:80},
+        {x:1540,y:300,speed:60,range:80},{x:2020,y:420,speed:65,range:80},
+        {x:700,y:60,flying:true,speed:50,range:100},{x:1300,y:60,flying:true,speed:55,range:100},
+        {x:1900,y:60,flying:true,speed:50,range:100},
+      ],
+      spikes:[
+        {x:460,y:520,w:70,dir:0,fix:true},{x:940,y:280,w:70,dir:0,fix:true},
+        {x:1420,y:280,w:70,dir:0,fix:true},{x:1900,y:400,w:70,dir:0,fix:true},
+      ],
+      portal:{x:2275,y:480}
+    },
+    // Level 11 - Almost there
+    {
+      name:'无尽挑战', width:2500, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:150,h:24},{x:210,y:520,w:70,h:20},{x:330,y:460,w:70,h:20},
+        {x:450,y:400,w:70,h:20},{x:570,y:340,w:70,h:20},{x:690,y:280,w:70,h:20},
+        {x:810,y:220,w:70,h:20},{x:930,y:280,w:70,h:20},{x:1050,y:220,w:70,h:20},
+        {x:1170,y:280,w:70,h:20},{x:1290,y:340,w:70,h:20},{x:1410,y:280,w:70,h:20},
+        {x:1530,y:220,w:70,h:20},{x:1650,y:280,w:70,h:20},{x:1770,y:340,w:70,h:20},
+        {x:1890,y:400,w:70,h:20},{x:2010,y:460,w:70,h:20},{x:2130,y:400,w:70,h:20},
+        {x:2250,y:460,w:70,h:20},{x:2370,y:520,w:80,h:60},
+        // Multiple paths
+        {x:450,y:80,w:100,h:20},{x:930,y:80,w:100,h:20},{x:1410,y:80,w:100,h:20},{x:1890,y:80,w:100,h:20},
+        {x:2370,y:80,w:80,h:20},
+        {x:570,y:160,w:20,h:80},{x:1050,y:140,w:20,h:80},{x:1530,y:160,w:20,h:80},{x:2010,y:140,w:20,h:60},
+      ],
+      orbs:[
+        {x:250,y:496},{x:370,y:436},{x:490,y:376},{x:610,y:316},{x:730,y:256},
+        {x:850,y:196},{x:970,y:256},{x:1090,y:196},{x:1210,y:256},{x:1330,y:316},
+        {x:1450,y:256},{x:1570,y:196},{x:1690,y:256},{x:1810,y:316},{x:1930,y:376},
+        {x:2050,y:436},{x:2170,y:376},{x:2290,y:436},{x:500,y:56},{x:980,y:56},
+        {x:1460,y:56},{x:1940,y:56},{x:2380,y:56},
+        {x:585,y:180},{x:1530,y:180},
+      ],
+      enemies:[
+        {x:450,y:360,speed:70,range:80},{x:930,y:240,speed:75,range:80},
+        {x:1410,y:240,speed:70,range:80},{x:1890,y:360,speed:75,range:80},
+        {x:690,y:60,flying:true,speed:60,range:100},{x:1290,y:60,flying:true,speed:65,range:100},
+        {x:1770,y:60,flying:true,speed:60,range:100},{x:2250,y:60,flying:true,speed:65,range:100},
+      ],
+      spikes:[
+        {x:330,y:460,w:70,dir:0,fix:true},{x:810,y:220,w:70,dir:0,fix:true},
+        {x:1290,y:340,w:70,dir:0,fix:true},{x:1770,y:340,w:70,dir:0,fix:true},
+        {x:2130,y:400,w:70,dir:0,fix:true},
+      ],
+      portal:{x:2385,y:460}
+    },
+    // Level 12 - Final challenge
+    {
+      name:'终极引力', width:2800, height:600,
+      playerStart:{x:80,y:480},
+      platforms:[
+        {x:0,y:560,w:140,h:24},{x:200,y:520,w:60,h:20},{x:310,y:460,w:60,h:20},
+        {x:420,y:400,w:60,h:20},{x:530,y:340,w:60,h:20},{x:640,y:280,w:60,h:20},
+        {x:750,y:220,w:60,h:20},{x:860,y:280,w:60,h:20},{x:970,y:220,w:60,h:20},
+        {x:1080,y:280,w:60,h:20},{x:1190,y:340,w:60,h:20},{x:1300,y:280,w:60,h:20},
+        {x:1410,y:220,w:60,h:20},{x:1520,y:280,w:60,h:20},{x:1630,y:340,w:60,h:20},
+        {x:1740,y:400,w:60,h:20},{x:1850,y:460,w:60,h:20},{x:1960,y:400,w:60,h:20},
+        {x:2070,y:340,w:60,h:20},{x:2180,y:400,w:60,h:20},{x:2290,y:340,w:60,h:20},
+        {x:2400,y:280,w:60,h:20},{x:2510,y:340,w:60,h:20},{x:2620,y:400,w:60,h:20},
+        {x:2730,y:480,w:80,h:60},
+        // Ceiling paths
+        {x:420,y:80,w:100,h:20},{x:860,y:60,w:100,h:20},{x:1410,y:60,w:100,h:20},
+        {x:1960,y:60,w:100,h:20},{x:2510,y:60,w:100,h:20},
+        // Wall paths
+        {x:530,y:160,w:20,h:80},{x:1080,y:180,w:20,h:60},{x:1520,y:160,w:20,h:80},
+        {x:2070,y:180,w:20,h:60},{x:2400,y:140,w:20,h:80},
+      ],
+      orbs:[
+        {x:240,y:496},{x:350,y:436},{x:460,y:376},{x:570,y:316},{x:680,y:256},
+        {x:790,y:196},{x:900,y:256},{x:1010,y:196},{x:1120,y:256},{x:1230,y:316},
+        {x:1340,y:256},{x:1450,y:196},{x:1560,y:256},{x:1670,y:316},{x:1780,y:376},
+        {x:1890,y:436},{x:2000,y:376},{x:2110,y:316},{x:2220,y:376},{x:2330,y:316},
+        {x:2440,y:256},{x:2550,y:316},{x:2660,y:376},{x:470,y:56},{x:910,y:36},
+        {x:1460,y:36},{x:2010,y:36},{x:2560,y:36},{x:550,y:180},{x:1530,y:180},
+      ],
+      enemies:[
+        {x:420,y:360,speed:75,range:80},{x:860,y:240,speed:80,range:80},
+        {x:1300,y:240,speed:75,range:80},{x:1740,y:360,speed:80,range:80},
+        {x:2180,y:360,speed:75,range:80},{x:2510,y:300,speed:80,range:80},
+        {x:640,y:60,flying:true,speed:65,range:100},{x:1190,y:60,flying:true,speed:70,range:100},
+        {x:1630,y:60,flying:true,speed:65,range:100},{x:2290,y:60,flying:true,speed:70,range:100},
+        {x:400,y:200,flying:true,speed:55,range:80},{x:2000,y:200,flying:true,speed:60,range:80},
+      ],
+      spikes:[
+        {x:310,y:460,w:60,dir:0,fix:true},{x:750,y:220,w:60,dir:0,fix:true},
+        {x:1190,y:340,w:60,dir:0,fix:true},{x:1630,y:340,w:60,dir:0,fix:true},
+        {x:1960,y:400,w:60,dir:0,fix:true},{x:2400,y:280,w:60,dir:0,fix:true},
+      ],
+      portal:{x:2745,y:420}
+    },
+  ];
+
+  if(num<1||num>12) num=1;
+  const lv=levels[num-1];
+  // Convert spike format and fix platform types
+  lv.platforms=lv.platforms.map(p=>({x:p.x,y:p.y,w:p.w,h:p.h,type:p.type||'static'}));
+  // Process spikes: they're stored with fix:true for easier editing, convert to proper format
+  lv.spikes=lv.spikes.map(s=>({x:s.x,y:s.y,w:s.w,h:18,dir:s.dir}));
+  return lv;
+}
+
+// ============================================================
+// SCORE POPUP
+// ============================================================
+class ScorePopup {
+  constructor(x,y,text,color) {
+    this.x=x; this.y=y;
+    this.text=text;
+    this.color=color||COLORS.scorePopup;
+    this.life=1;
+    this.vy=-60;
+  }
+  update(dt) {
+    this.y+=this.vy*dt;
+    this.life-=dt*1.2;
+  }
+  get dead() { return this.life<=0; }
+  draw(ctx, camX, camY) {
+    const sx=this.x-camX, sy=this.y-camY;
+    ctx.save();
+    ctx.globalAlpha=clamp(this.life,0,1);
+    ctx.fillStyle=this.color;
+    ctx.font='bold 18px "Courier New",monospace';
+    ctx.textAlign='center';
+    ctx.shadowColor='rgba(0,0,0,0.8)';
+    ctx.shadowBlur=4;
+    ctx.fillText(this.text,sx,sy);
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// GAME CLASS
+// ============================================================
+const GameState={MENU:'menu',PLAYING:'playing',PAUSED:'paused',LEVEL_COMPLETE:'lv_complete',GAME_OVER:'game_over',GAME_COMPLETE:'game_complete'};
+
+class Game {
+  constructor() {
+    this.canvas=document.getElementById('game');
+    this.ctx=this.canvas.getContext('2d');
+    this.resize();
+    window.addEventListener('resize',()=>this.resize());
+
+    this.state=GameState.MENU;
+    this.level=1;
+    this.score=0;
+    this.totalScore=0;
+    this.highScore=parseInt(localStorage.getItem('grav_highScore')||'0');
+    this.levelScores=JSON.parse(localStorage.getItem('grav_levelScores')||'{}');
+    this.combo=0;
+    this.comboTimer=0;
+    this.levelTime=CONFIG.LEVEL_TIME;
+    this.totalTime=0;
+    this.globalTime=0;
+    this.levelStats={completed:0};
+
+    this.player=null;
+    this.platforms=[];
+    this.orbs=[];
+    this.enemies=[];
+    this.spikes=[];
+    this.portal=null;
+    this.shockwaves=[];
+    this.popups=[];
+    this.particles=new ParticleSystem();
+    this.background=new GridBackground();
+    this.input=new InputManager();
+    this.sfx=new SoundFX();
+    this.camera={x:0,y:0};
+    this.levelData=null;
+    this.levelWidth=1200;
+    this.levelHeight=600;
+
+    this.pauseSelection=0;
+    this.menuBlink=0;
+    this.deathTimer=0;
+    this.levelTransition=0;
+    this.gameCompleteTimer=0;
+    this.showHelp=false;
+    this.controlsAlpha=0;
+
+    this.lastTime=0;
+    this.fps=60;
+    this.fpsTimer=0;
+    this.fpsCount=0;
+
+    this._bindKeys();
+    this._loop(0);
+  }
+
+  resize() {
+    const container=document.getElementById('game-container');
+    const cw=container.clientWidth, ch=container.clientHeight;
+    const scale=Math.min(cw/CONFIG.W,ch/CONFIG.H);
+    const w=Math.floor(CONFIG.W*scale), h=Math.floor(CONFIG.H*scale);
+    this.canvas.style.width=w+'px';
+    this.canvas.style.height=h+'px';
+    this.canvas.width=CONFIG.W;
+    this.canvas.height=CONFIG.H;
+    // Show mobile controls on touch devices
+    const mc=document.getElementById('mobile-controls');
+    mc.style.display=('ontouchstart' in window||navigator.maxTouchPoints>0)?'flex':'none';
+  }
+
+  _bindKeys() {
+    window.addEventListener('keydown',e=>{
+      switch(this.state) {
+        case GameState.MENU:
+          if(e.code==='Enter'||e.code==='Space') { e.preventDefault(); this._startGame(); }
+          if(e.code==='KeyH') this.showHelp=!this.showHelp;
+          break;
+        case GameState.PLAYING:
+          if(e.code==='Escape'||e.code==='KeyP') { e.preventDefault(); this.state=GameState.PAUSED; this.pauseSelection=0; }
+          if(e.code==='KeyH') this.showHelp=!this.showHelp;
+          break;
+        case GameState.PAUSED:
+          if(e.code==='Escape'||e.code==='KeyP') { e.preventDefault(); this.state=GameState.PLAYING; }
+          if(e.code==='ArrowUp'||e.code==='KeyW') { this.pauseSelection=(this.pauseSelection-1+3)%3; }
+          if(e.code==='ArrowDown'||e.code==='KeyS') { this.pauseSelection=(this.pauseSelection+1)%3; }
+          if(e.code==='Enter'||e.code==='Space') {
+            if(this.pauseSelection===0) this.state=GameState.PLAYING;
+            else if(this.pauseSelection===1) this._restartLevel();
+            else if(this.pauseSelection===2) { this.state=GameState.MENU; this.sfx.play('die'); }
+          }
+          break;
+        case GameState.LEVEL_COMPLETE:
+          if(e.code==='Enter'||e.code==='Space') {
+            if(this.level<12) { this.level++; this._loadLevel(this.level); this.state=GameState.PLAYING; }
+            else { this._gameComplete(); }
+          }
+          if(e.code==='KeyM') { this.state=GameState.MENU; this.sfx.play('die'); }
+          break;
+        case GameState.GAME_OVER:
+          if(e.code==='Enter'||e.code==='Space') { this._restartLevel(); }
+          if(e.code==='KeyM') { this.state=GameState.MENU; this.sfx.play('die'); }
+          break;
+        case GameState.GAME_COMPLETE:
+          if(e.code==='Enter'||e.code==='Space'||e.code==='Escape') { this.state=GameState.MENU; }
+          break;
+      }
+    });
+  }
+
+  _startGame() {
+    this.level=1;
+    this.totalScore=0;
+    this.combo=0;
+    this.comboTimer=0;
+    this.levelStats={completed:0};
+    this.totalTime=0;
+    this._loadLevel(1);
+    this.state=GameState.PLAYING;
+    if(this.sfx.ctx&&this.sfx.ctx.state==='suspended') this.sfx.ctx.resume();
+  }
+
+  _loadLevel(num) {
+    this.levelData=generateLevel(num);
+    this.levelWidth=this.levelData.width;
+    this.levelHeight=this.levelData.height;
+    this.player=new Player(this.levelData.playerStart.x,this.levelData.playerStart.y);
+    this.platforms=this.levelData.platforms.map(p=>new Platform(p.x,p.y,p.w,p.h,p.type));
+    this.orbs=this.levelData.orbs.map(o=>new Orb(o.x,o.y,o.colorIdx));
+    this.enemies=this.levelData.enemies.map(e=>new Enemy(e.x,e.y,e));
+    this.spikes=this.levelData.spikes.map(s=>new Spike(s.x,s.y,s.w,s.h,s.dir));
+    this.portal=new Portal(this.levelData.portal.x,this.levelData.portal.y);
+    this.shockwaves=[];
+    this.popups=[];
+    this.particles.particles=[];
+    this.deathTimer=0;
+    this.levelTransition=0;
+    this.levelTime=CONFIG.LEVEL_TIME;
+    this.camera.x=0; this.camera.y=0;
+    this.player.x=this.levelData.playerStart.x;
+    this.player.y=this.levelData.playerStart.y;
+    // Fix spike positions for spikes stored as "on platforms" - offset y to top of platform
+    // Spikes are rendered at their position, so we're fine
+    this._updateHUD();
+    this._updateGravIndicator();
+  }
+
+  _restartLevel() {
+    this._loadLevel(this.level);
+    this.state=GameState.PLAYING;
+    this.sfx.play('die');
+  }
+
+  _gameComplete() {
+    this.state=GameState.GAME_COMPLETE;
+    this.gameCompleteTimer=0;
+    this.sfx.play('game_complete');
+    // Save high score
+    const total=this.totalScore;
+    if(total>this.highScore) {
+      this.highScore=total;
+      localStorage.setItem('grav_highScore',String(total));
+    }
+    localStorage.setItem('grav_levelScores',JSON.stringify(this.levelStats));
+  }
+
+  _levelComplete() {
+    this.state=GameState.LEVEL_COMPLETE;
+    this.levelTransition=0;
+    this.levelStats.completed++;
+    // Time bonus
+    const timeBonus=Math.floor(this.levelTime)*10;
+    this.totalScore+=timeBonus;
+    this.sfx.play('level_clear');
+    // Save progress
+    if(this.totalScore>this.highScore) {
+      this.highScore=this.totalScore;
+      localStorage.setItem('grav_highScore',String(this.totalScore));
+    }
+    this.levelStats[this.level]={
+      completed:true,
+      score:this.totalScore,
+      orbs:this.orbs.filter(o=>o.collected).length,
+    };
+    localStorage.setItem('grav_levelScores',JSON.stringify(this.levelStats));
+    this._updateHUD();
+  }
+
+  _playerDeath() {
+    if(this.deathTimer>0) return;
+    this.player.alive=false;
+    this.deathTimer=1.2;
+    this.particles.emitBurst(this.player.cx,this.player.cy,['#e74c3c','#ff6b35','#ffd700'],30,{vx:rand(-4,4),vy:rand(-4,4),life:rand(0.5,1),decay:rand(0.01,0.025)});
+    this.sfx.play('die');
+    this._updateHUD();
+  }
+
+  _updateHUD() {
+    document.getElementById('hud-level').textContent=this.level+'/12';
+    document.getElementById('hud-score').textContent=this.totalScore;
+    document.getElementById('hud-combo').textContent=this.combo;
+    const mins=Math.floor(Math.max(0,this.levelTime)/60);
+    const secs=Math.floor(Math.max(0,this.levelTime)%60);
+    document.getElementById('hud-timer').textContent=mins+':'+(secs<10?'0':'')+secs;
+  }
+
+  _updateGravIndicator() {
+    const dots=document.querySelectorAll('.grav-dot');
+    dots.forEach((d,i)=>{
+      d.classList.toggle('active',i===this.player.gravityDir);
+      if(i===this.player.gravityDir) d.classList.add('pulse');
+      else d.classList.remove('pulse');
+    });
+    setTimeout(()=>{
+      document.querySelectorAll('.grav-dot.pulse').forEach(d=>d.classList.remove('pulse'));
+    },300);
+  }
+
+  update(dt) {
+    this.globalTime+=dt;
+    this.menuBlink+=dt;
+    this.fpsTimer+=dt;
+    this.fpsCount++;
+    if(this.fpsTimer>=0.5) {
+      this.fps=Math.round(this.fpsCount/this.fpsTimer);
+      this.fpsTimer=0; this.fpsCount=0;
+      document.getElementById('hud-fps').textContent=this.fps;
+    }
+
+    if(this.showHelp) {
+      if(this.input.isPressed('KeyH')) this.showHelp=false;
+      return; // freeze while help is shown
+    }
+
+    switch(this.state) {
+      case GameState.MENU:
+        this._updateMenu(dt);
+        break;
+      case GameState.PLAYING:
+        this._updatePlaying(dt);
+        break;
+      case GameState.PAUSED:
+        break;
+      case GameState.LEVEL_COMPLETE:
+        this.levelTransition+=dt;
+        this.portal.update(dt);
+        this.background.update(dt);
+        this.particles.update(dt);
+        break;
+      case GameState.GAME_OVER:
+        this.deathTimer=Math.max(0,this.deathTimer-dt);
+        this.particles.update(dt);
+        break;
+      case GameState.GAME_COMPLETE:
+        this.gameCompleteTimer+=dt;
+        this.background.update(dt);
+        this.particles.update(dt);
+        if(this.gameCompleteTimer<2) {
+          this.particles.emitBurst(rand(100,CONFIG.W-100),rand(100,CONFIG.H-100),
+            ['#e74c3c','#ffd700','#fff','#ff6b35'],5,
+            {vx:rand(-3,3),vy:rand(-3,3),life:rand(0.5,1.5),decay:rand(0.005,0.02)});
+        }
+        break;
+    }
+
+    // Gravity rotation
+    if(this.state===GameState.PLAYING&&this.player.alive) {
+      if(this.input.gravCCW) {
+        this.player.gravityDir=(this.player.gravityDir+1)%4;
+        this.player.grounded=false;
+        this._updateGravIndicator();
+        this.sfx.play('jump');
+      }
+      if(this.input.gravCW) {
+        this.player.gravityDir=(this.player.gravityDir+3)%4;
+        this.player.grounded=false;
+        this._updateGravIndicator();
+        this.sfx.play('jump');
+      }
+    }
+
+    this.input.clearFrame();
+  }
+
+  _updateMenu(dt) {
+    this.background.update(dt);
+    this.particles.update(dt);
+    // Floating particles on menu
+    if(Math.random()<0.3) {
+      this.particles.emitBurst(rand(0,CONFIG.W),rand(0,CONFIG.H),
+        ['rgba(255,255,255,0.15)','rgba(231,76,60,0.1)'],1,
+        {vx:rand(-0.5,0.5),vy:rand(-0.8,-0.2),life:rand(2,4),decay:rand(0.003,0.008),size:rand(1,3)});
+    }
+  }
+
+  _updatePlaying(dt) {
+    if(!this.player.alive) {
+      this.deathTimer-=dt;
+      this.particles.update(dt);
+      if(this.deathTimer<=0) this._restartLevel();
+      return;
+    }
+
+    // Timer
+    this.levelTime-=dt;
+    if(this.levelTime<=0) { this._playerDeath(); return; }
+
+    // Combo timer
+    if(this.combo>0) {
+      this.comboTimer-=dt;
+      if(this.comboTimer<=0) { this.combo=0; this._updateHUD(); }
+    }
+
+    // Background
+    this.background.update(dt);
+    // Particles
+    this.particles.update(dt);
+
+    // Update player
+    const result=this.player.update(dt,this.input,this.platforms);
+    if(result==='jump') this.sfx.play('jump');
+
+    // Track player's position for camera
+    const gc=GRAVITY_CFG[this.player.gravityDir];
+    const isVert=this.player.gravityDir===0||this.player.gravityDir===2;
+
+    // Camera follow
+    const targetX=this.player.cx-CONFIG.W/2;
+    let targetY=this.player.cy-CONFIG.H/2;
+    // For vertical gravity, keep camera centered; for horizontal, adjust
+    if(!isVert) targetY=this.player.cy-CONFIG.H/2;
+    this.camera.x+=(targetX-this.camera.x)*0.1;
+    this.camera.y+=(targetY-this.camera.y)*0.1;
+    // Clamp camera
+    this.camera.x=clamp(this.camera.x,0,Math.max(0,this.levelWidth-CONFIG.W));
+    this.camera.y=clamp(this.camera.y,0,Math.max(0,this.levelHeight-CONFIG.H));
+
+    // Update orbs
+    for(const o of this.orbs) {
+      o.update(dt,this.globalTime);
+      if(o.checkCollect(this.player.x,this.player.y,this.player.w,this.player.h)) {
+        o.collected=true;
+        this.combo++;
+        this.comboTimer=CONFIG.COMBO_WINDOW;
+        const bonus=Math.max(0,(this.combo-1)*CONFIG.COMBO_BONUS);
+        const totalScore=CONFIG.ORB_SCORE+bonus;
+        this.totalScore+=totalScore;
+        this.particles.emitBurst(o.x,o.y,COLORS.orb,15,
+          {vx:rand(-3,3),vy:rand(-3,3),life:rand(0.3,0.7),decay:rand(0.02,0.05)});
+        this.popups.push(new ScorePopup(o.x,o.y-10,'+'+totalScore,
+          this.combo>1?'#ffd700':COLORS.orb[o.colorIdx]));
+        if(this.combo>1) this.sfx.play('combo');
+        else this.sfx.play('orb');
+        this._updateHUD();
+      }
+    }
+
+    // Update enemies
+    for(const e of this.enemies) {
+      e.update(dt,this.globalTime,this.platforms);
+      if(e.checkCollide(this.player.x,this.player.y,this.player.w,this.player.h)) {
+        this._playerDeath();
+        return;
+      }
+    }
+
+    // Check spikes
+    for(const s of this.spikes) {
+      if(s.checkCollide(this.player.x,this.player.y,this.player.w,this.player.h)) {
+        this._playerDeath();
+        return;
+      }
+    }
+
+    // Update shockwaves
+    for(let i=this.shockwaves.length-1;i>=0;i--) {
+      const sw=this.shockwaves[i];
+      sw.update(dt);
+      if(!sw.active) { this.shockwaves.splice(i,1); continue; }
+      // Check enemy hits
+      for(const e of this.enemies) {
+        if(sw.hitTest(e)) {
+          const dir=Math.sign(e.x-this.player.x)||1;
+          e.knockback(dir);
+          this.particles.emitBurst(e.x+e.w/2,e.y+e.h/2,['#e74c3c','#ff6b6b','#fff'],20,
+            {vx:rand(-4,4),vy:rand(-4,4),life:rand(0.3,0.6),decay:rand(0.02,0.04)});
+          this.sfx.play('enemy_hit');
+          this.totalScore+=200;
+          this._updateHUD();
+        }
+      }
+    }
+
+    // Update popups
+    for(let i=this.popups.length-1;i>=0;i--) {
+      this.popups[i].update(dt);
+      if(this.popups[i].dead) this.popups.splice(i,1);
+    }
+
+    // Attack
+    if(this.input.attack&&this.player.canAttack()) {
+      this.player.shockwaveCooldown=CONFIG.SHOCKWAVE_COOLDOWN;
+      this.shockwaves.push(new Shockwave(this.player.cx,this.player.cy,this.player.gravityDir));
+      this.particles.emitBurst(this.player.cx,this.player.cy,
+        ['#e74c3c','#ff6b35','#fff'],20,
+        {vx:rand(-5,5),vy:rand(-5,5),life:rand(0.2,0.5),decay:rand(0.03,0.06)});
+      this.sfx.play('shockwave');
+    }
+
+    // Update portal
+    this.portal.update(dt);
+    if(this.portal.checkReach(this.player.x,this.player.y,this.player.w,this.player.h)) {
+      this._levelComplete();
+      return;
+    }
+
+    // Player trail particles
+    if(Math.random()<0.15) {
+      this.particles.emit(this.player.cx,this.player.cy,
+        `rgba(255,107,53,${rand(0.1,0.3)})`,1,
+        {vx:rand(-0.3,0.3),vy:rand(-0.3,0.3),life:rand(0.2,0.5),decay:rand(0.03,0.06),size:rand(1,3)});
+    }
+
+    this._updateHUD();
+  }
+
+  render() {
+    const ctx=this.ctx;
+    ctx.fillStyle=COLORS.bg;
+    ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+
+    switch(this.state) {
+      case GameState.MENU:
+        this._renderMenu(ctx);
+        break;
+      case GameState.PLAYING:
+      case GameState.PAUSED:
+        this._renderGame(ctx);
+        break;
+      case GameState.LEVEL_COMPLETE:
+        this._renderGame(ctx);
+        this._renderOverlay(ctx,GameState.LEVEL_COMPLETE);
+        break;
+      case GameState.GAME_OVER:
+        this._renderGame(ctx);
+        this._renderOverlay(ctx,GameState.GAME_OVER);
+        break;
+      case GameState.GAME_COMPLETE:
+        this._renderGameComplete(ctx);
+        break;
+    }
+  }
+
+  _renderGame(ctx) {
+    const cam=this.camera;
+
+    // Background
+    this.background.draw(ctx,cam.x,cam.y,CONFIG.W,CONFIG.H,this.levelWidth,this.levelHeight);
+
+    // Use world-space transform - all objects draw at world coords
+    ctx.save();
+    ctx.translate(-Math.round(cam.x),-Math.round(cam.y));
+
+    // Level bounds
+    ctx.strokeStyle='rgba(231,76,60,0.1)';
+    ctx.lineWidth=2;
+    ctx.strokeRect(0,0,this.levelWidth,this.levelHeight);
+
+    // Platforms (draw at world coords since ctx is translated)
+    for(const p of this.platforms) p.draw(ctx,0,0);
+
+    // Spikes
+    for(const s of this.spikes) s.draw(ctx,0,0);
+
+    // Orbs
+    for(const o of this.orbs) o.draw(ctx,0,0);
+
+    // Enemies
+    for(const e of this.enemies) e.draw(ctx,0,0);
+
+    // Portal
+    this.portal.draw(ctx,0,0);
+
+    // Shockwaves
+    for(const sw of this.shockwaves) sw.draw(ctx,0,0);
+
+    // Player trail
+    this.particles.draw(ctx);
+
+    // Player
+    if(this.player.alive) this.player.draw(ctx,this.globalTime);
+    // Death particles drawn above
+    if(!this.player.alive) this.particles.draw(ctx);
+
+    // Popups
+    for(const p of this.popups) p.draw(ctx,0,0);
+
+    ctx.restore();
+
+    // HUD elements on screen (not in world space)
+    // Combo display
+    const cd=document.getElementById('combo-display');
+    if(this.combo>1) {
+      cd.textContent='⚡ '+this.combo+'x 连击!';
+      cd.classList.add('show');
+    } else { cd.classList.remove('show'); }
+
+    // Shockwave cooldown indicator
+    if(this.player&&this.player.alive) {
+      const cooldown=this.player.shockwaveCooldown;
+      const maxCd=CONFIG.SHOCKWAVE_COOLDOWN;
+      if(cooldown>0) {
+        ctx.save();
+        ctx.fillStyle='rgba(231,76,60,0.15)';
+        ctx.fillRect(10,CONFIG.H-30,CONFIG.W-20,6);
+        ctx.fillStyle='rgba(231,76,60,0.5)';
+        ctx.fillRect(10,CONFIG.H-30,(CONFIG.W-20)*(1-cooldown/maxCd),6);
+        ctx.fillStyle='rgba(255,255,255,0.4)';
+        ctx.font='10px monospace';
+        ctx.textAlign='left';
+        ctx.fillText('⚡ 冲击波',12,CONFIG.H-34);
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.fillStyle='rgba(255,255,255,0.15)';
+        ctx.fillRect(10,CONFIG.H-30,CONFIG.W-20,6);
+        ctx.fillStyle='rgba(46,204,113,0.5)';
+        ctx.fillRect(10,CONFIG.H-30,CONFIG.W-20,6);
+        ctx.fillStyle='rgba(255,255,255,0.5)';
+        ctx.font='10px monospace';
+        ctx.textAlign='left';
+        ctx.fillText('⚡ 冲击波就绪 (J/鼠标左键)',12,CONFIG.H-34);
+        ctx.restore();
+      }
+    }
+
+    // Level name
+    if(this.levelData) {
+      ctx.save();
+      ctx.fillStyle='rgba(255,255,255,0.2)';
+      ctx.font='14px "Courier New",monospace';
+      ctx.textAlign='right';
+      ctx.fillText(this.levelData.name,CONFIG.W-12,30);
+      ctx.restore();
+    }
+
+    // Help overlay
+    if(this.showHelp) this._renderHelp(ctx);
+
+    // Pause overlay
+    if(this.state===GameState.PAUSED) this._renderPause(ctx);
+  }
+
+  _renderPause(ctx) {
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.65)';
+    ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff';
+    ctx.font='bold 36px "Courier New",monospace';
+    ctx.fillText('暂停',CONFIG.W/2,CONFIG.H/2-80);
+    const items=['继续游戏','重新开始','返回主菜单'];
+    items.forEach((item,i)=>{
+      ctx.fillStyle=i===this.pauseSelection?'#e74c3c':'#888';
+      ctx.font=i===this.pauseSelection?'bold 22px "Courier New",monospace':'20px "Courier New",monospace';
+      ctx.fillText(item,CONFIG.W/2,CONFIG.H/2-10+i*44);
+    });
+    ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.font='14px "Courier New",monospace';
+    ctx.fillText('↑↓ 选择  Enter 确认  Esc 继续',CONFIG.W/2,CONFIG.H-40);
+    ctx.restore();
+  }
+
+  _renderOverlay(ctx,state) {
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.75)';
+    ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+    ctx.textAlign='center';
+    if(state===GameState.LEVEL_COMPLETE) {
+      ctx.fillStyle='#ffd700';
+      ctx.font='bold 42px "Courier New",monospace';
+      ctx.fillText('过关!',CONFIG.W/2,CONFIG.H/2-100);
+      ctx.fillStyle='#fff';
+      ctx.font='22px "Courier New",monospace';
+      ctx.fillText('得分: '+this.totalScore,CONFIG.W/2,CONFIG.H/2-40);
+      const mins=Math.floor(Math.max(0,this.levelTime)/60);
+      const secs=Math.floor(Math.max(0,this.levelTime)%60);
+      ctx.fillStyle='#aaa';
+      ctx.font='18px "Courier New",monospace';
+      ctx.fillText('剩余时间: '+mins+':'+(secs<10?'0':'')+secs,CONFIG.W/2,CONFIG.H/2+5);
+      ctx.fillText('时间奖励: +'+Math.floor(this.levelTime)*10,CONFIG.W/2,CONFIG.H/2+35);
+      ctx.fillStyle='#888';
+      ctx.font='16px "Courier New",monospace';
+      if(this.level<12) ctx.fillText('按 Enter 进入下一关',CONFIG.W/2,CONFIG.H/2+90);
+      else ctx.fillText('按 Enter 查看最终成绩',CONFIG.W/2,CONFIG.H/2+90);
+      ctx.fillText('按 M 返回主菜单',CONFIG.W/2,CONFIG.H/2+120);
+    } else if(state===GameState.GAME_OVER) {
+      ctx.fillStyle='#e74c3c';
+      ctx.font='bold 42px "Courier New",monospace';
+      ctx.fillText('失败',CONFIG.W/2,CONFIG.H/2-60);
+      ctx.fillStyle='#fff';
+      ctx.font='18px "Courier New",monospace';
+      ctx.fillText('按 Enter 重新开始',CONFIG.W/2,CONFIG.H/2+10);
+      ctx.fillText('按 M 返回主菜单',CONFIG.W/2,CONFIG.H/2+40);
+    }
+    ctx.restore();
+  }
+
+  _renderMenu(ctx) {
+    // Background
+    this.background.draw(ctx,0,0,CONFIG.W,CONFIG.H,CONFIG.W,CONFIG.H);
+    this.particles.draw(ctx);
+
+    ctx.save();
+    ctx.textAlign='center';
+
+    // Title
+    const pulse=Math.sin(this.menuBlink*2)*0.08+0.92;
+    ctx.fillStyle='#fff';
+    ctx.font='bold 56px "Courier New",monospace';
+    ctx.shadowColor='rgba(231,76,60,0.4)';
+    ctx.shadowBlur=30*pulse;
+    ctx.fillText('重力迷踪',CONFIG.W/2,140);
+    ctx.shadowBlur=0;
+
+    // Subtitle
+    ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.font='16px "Courier New",monospace';
+    ctx.fillText('GRAVITY MAZE',CONFIG.W/2,170);
+
+    // Decorative line
+    ctx.strokeStyle='rgba(231,76,60,0.5)';
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(CONFIG.W/2-120,190);
+    ctx.lineTo(CONFIG.W/2+120,190);
+    ctx.stroke();
+
+    // Gravity direction visualization
+    const gSize=20;
+    const gCenterX=CONFIG.W/2;
+    const gCenterY=250;
+    ctx.strokeStyle='rgba(255,255,255,0.15)';
+    ctx.lineWidth=1;
+    ctx.strokeRect(gCenterX-gSize,gCenterY-gSize,gSize*2,gSize*2);
+    // Arrow pointing down
+    ctx.strokeStyle='rgba(231,76,60,0.6)';
+    ctx.lineWidth=2;
+    const arrowPhase=Math.sin(this.menuBlink*3)*0.3+0.7;
+    ctx.save();
+    ctx.translate(gCenterX,gCenterY);
+    ctx.rotate(Math.floor(this.menuBlink/1.5)%4*Math.PI/2);
+    ctx.beginPath();
+    ctx.moveTo(0,-gSize+4);
+    ctx.lineTo(0,gSize-4);
+    ctx.moveTo(-6,gSize-10);
+    ctx.lineTo(0,gSize-4);
+    ctx.lineTo(6,gSize-10);
+    ctx.stroke();
+    ctx.restore();
+
+    // Start prompt
+    const blink=Math.sin(this.menuBlink*3)>0;
+    ctx.fillStyle=blink?'#e74c3c':'rgba(231,76,60,0.4)';
+    ctx.font='bold 22px "Courier New",monospace';
+    ctx.fillText('按 Enter 开始游戏',CONFIG.W/2,320);
+
+    // Controls info
+    ctx.fillStyle='rgba(255,255,255,0.35)';
+    ctx.font='14px "Courier New",monospace';
+    const controls=[
+      'A/D / ← →  移动    空格  跳跃',
+      'Q / E  旋转重力方向',
+      'J / 鼠标左键  冲击波',
+      'H  操作说明    Esc  暂停',
+    ];
+    controls.forEach((c,i)=>{
+      ctx.fillText(c,CONFIG.W/2,380+i*26);
+    });
+
+    // High score
+    ctx.fillStyle='rgba(255,255,255,0.25)';
+    ctx.font='14px "Courier New",monospace';
+    ctx.fillText('最高分: '+this.highScore,CONFIG.W/2,CONFIG.H-40);
+
+    // Version
+    ctx.fillStyle='rgba(255,255,255,0.1)';
+    ctx.font='12px "Courier New",monospace';
+    ctx.textAlign='right';
+    ctx.fillText('v1.0  |  12关',CONFIG.W-12,CONFIG.H-8);
+
+    ctx.restore();
+
+    // Help overlay
+    if(this.showHelp) this._renderHelp(ctx);
+  }
+
+  _renderHelp(ctx) {
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.88)';
+    ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#e74c3c';
+    ctx.font='bold 28px "Courier New",monospace';
+    ctx.fillText('操作说明',CONFIG.W/2,60);
+
+    ctx.textAlign='left';
+    ctx.font='16px "Courier New",monospace';
+    const items=[
+      {k:'A / ←',d:'向左移动'},
+      {k:'D / →',d:'向右移动'},
+      {k:'空格',d:'跳跃 (离开当前表面)'},
+      {k:'Q',d:'逆时针旋转重力方向'},
+      {k:'E',d:'顺时针旋转重力方向'},
+      {k:'J / 鼠标左键',d:'释放重力冲击波'},
+      {k:'Esc / P',d:'暂停游戏'},
+      {k:'H',d:'显示/隐藏此帮助'},
+    ];
+    items.forEach((item,i)=>{
+      ctx.fillStyle='#e74c3c';
+      ctx.fillText(item.k,CONFIG.W/2-200,110+i*36);
+      ctx.fillStyle='#ccc';
+      ctx.fillText(item.d,CONFIG.W/2+20,110+i*36);
+    });
+
+    // Game rules
+    const y=110+items.length*36+20;
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffd700';
+    ctx.font='bold 20px "Courier New",monospace';
+    ctx.fillText('游戏规则',CONFIG.W/2,y);
+    ctx.textAlign='left';
+    ctx.font='14px "Courier New",monospace';
+    ctx.fillStyle='#aaa';
+    const rules=[
+      '🎯 目标: 收集能量球，在5分钟内抵达传送门',
+      '✅ 胜利: 到达每关的传送门出口',
+      '❌ 失败: 触碰红色尖刺或敌人（从本关起点复活）',
+      '💡 连击: 快速连续收集能量球获得额外加分',
+      '💡 冲击波: 推开敌人或击碎障碍物',
+      '💡 善用重力切换到达常规跳跃无法触及的位置',
+    ];
+    rules.forEach((r,i)=>{
+      ctx.fillText(r,CONFIG.W/2-230,y+26+i*22);
+    });
+
+    ctx.textAlign='center';
+    ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.font='14px "Courier New",monospace';
+    ctx.fillText('按 H 关闭',CONFIG.W/2,CONFIG.H-20);
+    ctx.restore();
+  }
+
+  _renderGameComplete(ctx) {
+    ctx.fillStyle='#0a0a0a';
+    ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+    this.background.draw(ctx,0,0,CONFIG.W,CONFIG.H,CONFIG.W,CONFIG.H);
+    this.particles.draw(ctx);
+
+    ctx.save();
+    ctx.textAlign='center';
+
+    // Title animation
+    const t=this.gameCompleteTimer;
+    const titleScale=Math.min(1,t/0.8);
+    ctx.save();
+    ctx.translate(CONFIG.W/2,120);
+    ctx.scale(titleScale,titleScale);
+    ctx.fillStyle='#ffd700';
+    ctx.font='bold 48px "Courier New",monospace';
+    ctx.shadowColor='rgba(255,215,0,0.5)';
+    ctx.shadowBlur=40;
+    ctx.fillText('通关!',0,0);
+    ctx.shadowBlur=0;
+    ctx.restore();
+
+    if(t>0.8) {
+      ctx.fillStyle='rgba(255,255,255,0.5)';
+      ctx.font='18px "Courier New",monospace';
+      ctx.fillText('GRAVITY MAZE  COMPLETE',CONFIG.W/2,160);
+    }
+
+    if(t>1.2) {
+      ctx.fillStyle='#fff';
+      ctx.font='24px "Courier New",monospace';
+      ctx.fillText('总得分: '+this.totalScore,CONFIG.W/2,220);
+
+      // Ranking
+      ctx.fillStyle='rgba(255,255,255,0.3)';
+      ctx.font='16px "Courier New",monospace';
+      ctx.fillText('最高分: '+this.highScore,CONFIG.W/2,255);
+
+      // Star rating based on score
+      const stars=this.totalScore>=15000?3:this.totalScore>=8000?2:1;
+      ctx.font='32px "Courier New",monospace';
+      const starStr='★'.repeat(stars)+'☆'.repeat(3-stars);
+      ctx.fillStyle='#ffd700';
+      ctx.fillText(starStr,CONFIG.W/2,300);
+
+      // Stats
+      ctx.fillStyle='rgba(255,255,255,0.35)';
+      ctx.font='16px "Courier New",monospace';
+      ctx.fillText('完成关卡: '+this.levelStats.completed+'/12',CONFIG.W/2,340);
+
+      // New record
+      if(this.totalScore>=this.highScore&&this.totalScore>0) {
+        ctx.fillStyle='#ffd700';
+        ctx.font='bold 20px "Courier New",monospace';
+        const recPulse=Math.sin(t*4)*0.2+0.8;
+        ctx.globalAlpha=recPulse;
+        ctx.fillText('★ 新纪录! ★',CONFIG.W/2,385);
+        ctx.globalAlpha=1;
+      }
+    }
+
+    if(t>1.5) {
+      const blink=Math.sin(t*3)>0;
+      ctx.fillStyle=blink?'#e74c3c':'rgba(231,76,60,0.3)';
+      ctx.font='18px "Courier New",monospace';
+      ctx.fillText('按 Enter 返回主菜单',CONFIG.W/2,CONFIG.H-50);
+    }
+
+    ctx.restore();
+  }
+
+  _loop(timestamp) {
+    const dt=this.lastTime?Math.min((timestamp-this.lastTime)/1000,0.05):1/60;
+    this.lastTime=timestamp;
+    this.update(dt);
+    this.render();
+    requestAnimationFrame((t)=>this._loop(t));
+  }
+}
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+window.addEventListener('DOMContentLoaded',()=>{
+  new Game();
+});
+</script>
+</body>
+</html>
