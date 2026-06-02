@@ -13,8 +13,11 @@ const COLS = 20
 const ROWS = 13
 const CANVAS_W = COLS * TILE   // 960
 const CANVAS_H = ROWS * TILE   // 624
-const TICK_MS = 160           // ms per rewind tick
-const STAY_TICKS = 6          // ticks a box stays after push before rewinding (~1s)
+// ── Box recording / rewind timing ────────────────────────
+const BOX_RECORD_INTERVAL = 200  // ms between position recordings
+const BOX_REWIND_INTERVAL = 500  // ms between rewind steps
+const BOX_MAX_HISTORY = 25       // 5s ÷ 200ms = 25 entries
+const BOX_STAY_DURATION = 800    // ms after push before rewind starts
 
 // Colors — steampunk palette
 const C = {
@@ -153,9 +156,6 @@ export class GameEngine {
 
     // Time system
     this.timePaused = false
-    this.tickAccum = 0
-    this.tickInterval = TICK_MS
-    this.stayTicks = STAY_TICKS
 
     // Input
     this.keys = {}
@@ -216,15 +216,29 @@ export class GameEngine {
     this.player.animY = this.player.row * TILE
     this.player.facing = 1
 
-    // Boxes — each has a position stack and stay timer
+    // Boxes — each has a position history for time rewind
     this.boxes = data.boxStarts.map((bs, i) => {
       const pedestal = data.pedestals[i] || data.pedestals[0]
       return {
         col: bs.col,
         row: bs.row,
-        history: [{ col: bs.col, row: bs.row }], // position stack; last = current
+        // Smooth visual animation
+        animX: bs.col * TILE,
+        animY: bs.row * TILE,
+        isMoving: false,
+        moveFromCol: bs.col,
+        moveFromRow: bs.row,
+        moveToCol: bs.col,
+        moveToRow: bs.row,
+        moveProgress: 0,
+        moveDuration: BOX_REWIND_INTERVAL,
+        // Position history: [oldest … newest], continuous recording
+        history: [],
+        recordTimer: 0,
+        rewindTimer: 0,
         stayTimer: 0,
-        stayNeeded: STAY_TICKS,
+        stayDuration: BOX_STAY_DURATION,
+        phase: 'recording',  // 'recording' | 'staying' | 'rewinding'
         pedestalCol: pedestal.col,
         pedestalRow: pedestal.row,
         placed: false,
@@ -259,7 +273,6 @@ export class GameEngine {
     this.timeRemaining = data.timeLimit || 120
     this.timeElapsed = 0
     this.timePaused = false
-    this.tickAccum = 0
     this.steamParticles = []
     this.sparkParticles = []
   }
@@ -399,14 +412,14 @@ export class GameEngine {
       this._animatePlayerMovement(dt)
     }
 
-    // Time tick system
+    // Box recording (continuous position sampling)
     if (!this.timePaused) {
-      this.tickAccum += dt
-      while (this.tickAccum >= this.tickInterval) {
-        this.tickAccum -= this.tickInterval
-        this._timeTick()
-      }
+      this._recordBoxPositions(dt)
+      this._updateBoxRewind(dt)
     }
+
+    // Animate box movements (always, even when paused — finishes current animations)
+    this._animateBoxMovements(dt)
 
     // Effects
     this.fxTimer += dt
@@ -438,9 +451,11 @@ export class GameEngine {
 
     if (!this._isWalkable(newCol, newRow)) return
 
-    // Check for box to push
+    // Check for box to push (only allowed when time is flowing)
+    const canPush = !this.timePaused
     const box = this._getBoxAt(newCol, newRow)
     if (box) {
+      if (!canPush) return  // can't push while time is frozen
       if (box.placed) return // can't push placed boxes
       const pushCol = newCol + dx
       const pushRow = newRow + dy
@@ -500,20 +515,24 @@ export class GameEngine {
 
   // ── Box Mechanics ────────────────────────────────────
   _pushBox(box, newCol, newRow) {
+    // Record old position for rewind anchor
+    const oldCol = box.col
+    const oldRow = box.row
+
     box.col = newCol
     box.row = newRow
-
-    // Add to history stack (only if the position actually changed)
-    const last = box.history[box.history.length - 1]
-    if (last.col !== newCol || last.row !== newRow) {
-      box.history.push({ col: newCol, row: newRow })
-      // Cap history to prevent unbounded growth
-      if (box.history.length > 40) {
-        box.history.splice(0, box.history.length - 30)
-      }
-    }
-    // Reset stay timer so the box stays at the pushed position
+    box.phase = 'staying'
     box.stayTimer = 0
+    box.rewindTimer = 0
+    box.moveFromCol = oldCol
+    box.moveFromRow = oldRow
+    box.moveToCol = newCol
+    box.moveToRow = newRow
+    box.moveProgress = 0
+    box.isMoving = true
+    box.moveDuration = 200  // quick push animation
+
+    // The continuous recorder will pick up this new position naturally
 
     SFX.push()
 
@@ -530,31 +549,110 @@ export class GameEngine {
     this._checkBoxPlacement(box)
   }
 
-  _timeTick() {
-    // Each tick: non-placed boxes either stay or rewind one step
+  // ── Box Recording (continuous position sampling) ──────
+  _recordBoxPositions(dt) {
     for (const box of this.boxes) {
       if (box.placed) continue
-      if (box.history.length <= 1) continue // nowhere to rewind to
-
-      if (box.stayTimer < box.stayNeeded) {
-        // Still "resting" at current position
-        box.stayTimer++
-      } else {
-        // Rewind one step
-        box.history.pop()
-        const prev = box.history[box.history.length - 1]
-        box.col = prev.col
-        box.row = prev.row
-        box.stayTimer = 0
+      box.recordTimer += dt
+      while (box.recordTimer >= BOX_RECORD_INTERVAL) {
+        box.recordTimer -= BOX_RECORD_INTERVAL
+        box.history.push({ col: box.col, row: box.row })
+        if (box.history.length > BOX_MAX_HISTORY) {
+          box.history.shift()
+        }
       }
     }
+  }
 
-    // Re-check placement after rewind
+  // ── Box Stay / Rewind ────────────────────────────────
+  _updateBoxRewind(dt) {
     for (const box of this.boxes) {
-      if (!box.placed) {
-        this._checkBoxPlacement(box)
+      if (box.placed) continue
+
+      if (box.phase === 'staying') {
+        box.stayTimer += dt
+        if (box.stayTimer >= box.stayDuration) {
+          box.phase = 'rewinding'
+          box.rewindTimer = 0
+        }
+      }
+
+      if (box.phase === 'rewinding') {
+        box.rewindTimer += dt
+        while (box.rewindTimer >= BOX_REWIND_INTERVAL) {
+          box.rewindTimer -= BOX_REWIND_INTERVAL
+          this._doRewindStep(box)
+        }
       }
     }
+  }
+
+  _doRewindStep(box) {
+    if (box.history.length <= 1) {
+      box.phase = 'recording'
+      return
+    }
+
+    const prevCol = box.col
+    const prevRow = box.row
+    const popped = box.history.pop()
+    const newLast = box.history[box.history.length - 1]
+
+    box.col = newLast.col
+    box.row = newLast.row
+
+    if (box.col !== prevCol || box.row !== prevRow) {
+      // Position changed — animate the rewind movement
+      box.moveFromCol = prevCol
+      box.moveFromRow = prevRow
+      box.moveToCol = box.col
+      box.moveToRow = box.row
+      box.moveProgress = 0
+      box.isMoving = true
+      box.moveDuration = BOX_REWIND_INTERVAL
+
+      this._checkBoxPlacement(box)
+
+      // Spawn rewind particles
+      if (Math.random() < 0.5) {
+        this.sparkParticles.push(new SparkParticle(
+          prevCol * TILE + TILE / 2,
+          prevRow * TILE + TILE / 2,
+          'rgba(100,180,255,0.4)'
+        ))
+      }
+    } else {
+      // Position unchanged — this pop was a same-position entry.
+      // Check if ALL remaining history is at the current position
+      const allSame = box.history.every(h => h.col === box.col && h.row === box.row)
+      if (allSame) {
+        // Fully rewound — restore the popped entry and switch to recording
+        box.history.push(popped)
+        box.phase = 'recording'
+      }
+    }
+  }
+
+  // ── Smooth box movement animation ────────────────────
+  _animateBoxMovements(dt) {
+    for (const box of this.boxes) {
+      if (!box.isMoving) continue
+      box.moveProgress += dt / box.moveDuration
+      if (box.moveProgress >= 1) {
+        box.moveProgress = 1
+        box.isMoving = false
+        box.animX = box.col * TILE
+        box.animY = box.row * TILE
+      } else {
+        const t = this._easeInOutQuad(box.moveProgress)
+        box.animX = (box.moveFromCol + (box.moveToCol - box.moveFromCol) * t) * TILE
+        box.animY = (box.moveFromRow + (box.moveToRow - box.moveFromRow) * t) * TILE
+      }
+    }
+  }
+
+  _easeInOutQuad(t) {
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
   }
 
   _checkBoxPlacement(box) {
@@ -928,30 +1026,57 @@ export class GameEngine {
 
   // ── Box Drawing ─────────────────────────────────────
   _drawBox(ctx, box) {
-    const px = box.col * TILE
-    const py = box.row * TILE
+    const px = box.animX
+    const py = box.animY
     const size = TILE - 8
 
-    // Shadow
+    // ── Ghost trail (semi-transparent history snapshots) ──
+    if (!box.placed && box.history.length > 0) {
+      // Sample a few historical positions for ghost trail
+      const ghostCount = Math.min(4, Math.floor(box.history.length / 2))
+      for (let gi = 0; gi < ghostCount; gi++) {
+        const idx = Math.max(0, box.history.length - 1 - (gi + 1) * 3)
+        if (idx < 0 || idx >= box.history.length) continue
+        const h = box.history[idx]
+        const gx = h.col * TILE
+        const gy = h.row * TILE
+        const alpha = 0.08 + (0.06 * (ghostCount - gi)) / ghostCount
+        const ghostSize = size - gi * 2
+
+        ctx.fillStyle = `rgba(200,180,100,${alpha})`
+        ctx.fillRect(gx + 4 + gi, gy + 4 + gi, ghostSize, ghostSize)
+
+        // Ghost gear symbol
+        ctx.strokeStyle = `rgba(200,180,100,${alpha * 0.5})`
+        ctx.lineWidth = 0.5
+        const gcx = gx + TILE / 2
+        const gcy = gy + TILE / 2
+        ctx.beginPath()
+        ctx.arc(gcx, gcy, 5 - gi, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+    }
+
+    // ── Shadow ──
     ctx.fillStyle = 'rgba(0,0,0,0.25)'
     ctx.fillRect(px + 4, py + 6, size, size)
 
-    // Box body
-    ctx.fillStyle = box.placed ? C.boxBody : C.boxBody
+    // ── Box body ──
+    ctx.fillStyle = box.placed ? '#8b6b40' : C.boxBody
     ctx.fillRect(px + 2, py + 2, size, size)
 
-    // Box trim (brass bands)
+    // ── Box trim (brass bands) ──
     ctx.fillStyle = C.boxBrass
     ctx.fillRect(px + 2, py + 2, size, 3)
     ctx.fillRect(px + 2, py + size - 1, size, 3)
     ctx.fillRect(px + 2, py + 2, 3, size)
     ctx.fillRect(px + size - 1, py + 2, 3, size)
 
-    // Horizontal brass band
+    // ── Horizontal brass band ──
     ctx.fillStyle = C.brassDark
     ctx.fillRect(px + 4, py + size / 2 - 1, size - 4, 3)
 
-    // Gear symbol on box
+    // ── Gear symbol on box ──
     const cx = px + size / 2 + 2
     const cy = py + size / 2 + 2
     ctx.strokeStyle = C.boxLabel
@@ -968,7 +1093,18 @@ export class GameEngine {
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
 
-    // Placed glow
+    // ── Time-frozen glow ──
+    if (this.timePaused && !box.placed && box.phase !== 'recording') {
+      ctx.save()
+      ctx.shadowColor = 'rgba(100,180,255,0.4)'
+      ctx.shadowBlur = 12
+      ctx.strokeStyle = 'rgba(100,180,255,0.3)'
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(px, py, size + 2, size + 2)
+      ctx.restore()
+    }
+
+    // ── Placed glow ──
     if (box.placed) {
       ctx.save()
       ctx.shadowColor = C.pedestalGlow
@@ -1131,14 +1267,53 @@ export class GameEngine {
 
   // ── Pause Overlay ──────────────────────────────────
   _drawPauseOverlay(ctx) {
-    ctx.fillStyle = C.pauseTint
+    // Colored overlay tint
+    ctx.fillStyle = 'rgba(20,40,80,0.15)'
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
 
-    ctx.fillStyle = `rgba(80,120,180,0.5)`
-    ctx.font = 'bold 28px monospace'
+    // Top pause banner
+    const pulse = Math.sin(this.timeElapsed * 3) * 0.3 + 0.7
+
+    ctx.fillStyle = `rgba(60,100,180,${0.15 + pulse * 0.15})`
+    ctx.fillRect(CANVAS_W / 2 - 120, 8, 240, 32)
+
+    ctx.fillStyle = `rgba(100,180,255,${0.5 + pulse * 0.3})`
+    ctx.font = 'bold 18px monospace'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('⏸ 时间暂停', CANVAS_W / 2, 30)
+    ctx.fillText('⏸ 时间暂停  ⏸', CANVAS_W / 2, 24)
+
+    // Hourglass / clock ornament
+    const cx = CANVAS_W - 60
+    const cy = CANVAS_H - 40
+    ctx.strokeStyle = `rgba(100,180,255,${0.15 + pulse * 0.15})`
+    ctx.lineWidth = 1
+    const r = 14 + 2 * pulse
+    // Outer ring
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.stroke()
+    // Inner gear
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(this.gearAngle * 0.5)
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2
+      ctx.fillStyle = `rgba(100,180,255,${0.1 + pulse * 0.1})`
+      ctx.fillRect(Math.cos(a) * 8 - 1, Math.sin(a) * 8 - 2, 2, 4)
+    }
+    ctx.beginPath()
+    ctx.arc(0, 0, 6, 0, Math.PI * 2)
+    ctx.strokeStyle = `rgba(100,180,255,${0.2 + pulse * 0.15})`
+    ctx.stroke()
+    ctx.restore()
+
+    // Controls hint during pause
+    ctx.fillStyle = 'rgba(240,232,208,0.25)'
+    ctx.font = '11px monospace'
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText('空格 = 恢复时间', CANVAS_W - 12, CANVAS_H - 12)
   }
 
   // ── UI ─────────────────────────────────────────────

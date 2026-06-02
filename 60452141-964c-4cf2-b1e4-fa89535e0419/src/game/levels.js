@@ -75,7 +75,7 @@ export const LEVELS = [
   parseLevel(`
     WWWWWWWWWWWWWWWWWWWW
     W..................W
-    W..WWWWWWWWWWWWW..W.
+    W..WWWWWWWWWWWWW..WW
     W..................W
     W..................W
     W...P.B............W
@@ -84,7 +84,7 @@ export const LEVELS = [
     W..................W
     W..................W
     W..................W
-    W......E..........W.
+    W......E..........WW
     WWWWWWWWWWWWWWWWWWWW
   `, [
     { boxCol: 6, boxRow: 5, pedestalCol: 7, pedestalRow: 11 }
@@ -119,17 +119,17 @@ export const LEVELS = [
   // ═══════════════════════════════════════════════════════
   parseLevel(`
     WWWWWWWWWWWWWWWWWWWW
-    W.B..........X....W.
+    W.B..........X....WW
     W..................W
-    W.WWWWW..WWWWWW...W.
+    W.WWWWW..WWWWWW...WW
     W..................W
-    W.X...............W.
-    W..........B......W.
+    W.X...............WW
+    W..........B......WW
     W..................W
-    W...WWWWWWWWWW....W.
+    W...WWWWWWWWWW....WW
     W..................W
-    W..........X.B....W.
-    W...E..E.......E..W.
+    W..........X.B....WW
+    W...E..E.......E..WW
     WWWWWWWWWWWWWWWWWWWW
   `, [
     { boxCol: 2, boxRow: 1, pedestalCol: 4, pedestalRow: 11 },

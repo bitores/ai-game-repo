@@ -29,10 +29,115 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #1a2a1a; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Comic Sans MS', 'Chalkboard SE', cursive, sans-serif; overflow: hidden; user-select: none; }
 canvas { display: block; border-radius: 8px; box-shadow: 0 0 40px rgba(0,0,0,0.5); }
+
+/* Game container wraps canvas for overlaying mobile controls */
+#game-container { position: relative; display: inline-block; }
+
+/* Mobile virtual controls container */
+#mobile-controls {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 10;
+  display: none;
+}
+#mobile-controls.active { display: block; }
+
+/* D-Pad (bottom-left) */
+#dpad {
+  position: absolute;
+  bottom: 15px;
+  left: 10px;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+.dpad-btn {
+  width: 56px; height: 56px;
+  margin: 2px;
+  border-radius: 16px;
+  background: rgba(0,0,0,0.35);
+  border: 2px solid rgba(255,255,255,0.25);
+  color: #fff;
+  font-size: 22px;
+  line-height: 56px;
+  text-align: center;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  transition: background 0.1s, transform 0.1s;
+}
+.dpad-btn.active, .dpad-btn:active {
+  background: rgba(255,255,255,0.35);
+  border-color: rgba(255,255,255,0.5);
+  transform: scale(0.92);
+}
+.dpad-row {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+#dpad > .dpad-btn {
+  display: block;
+  margin: 0 auto 2px;
+}
+
+/* Action buttons (bottom-right) */
+#action-buttons {
+  position: absolute;
+  bottom: 20px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+.action-btn {
+  width: 76px; height: 50px;
+  border-radius: 16px;
+  background: rgba(0,0,0,0.35);
+  border: 2px solid rgba(255,255,255,0.25);
+  color: #fff;
+  font-size: 13px;
+  font-weight: bold;
+  text-align: center;
+  line-height: 50px;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  transition: background 0.1s, transform 0.1s;
+}
+.action-btn.active, .action-btn:active {
+  background: rgba(255,255,255,0.35);
+  border-color: rgba(255,255,255,0.5);
+  transform: scale(0.92);
+}
 </style>
 </head>
 <body>
+<div id="game-container">
 <canvas id="game"></canvas>
+<div id="mobile-controls">
+  <div id="dpad">
+    <button class="dpad-btn" data-dir="up">▲</button>
+    <div class="dpad-row">
+      <button class="dpad-btn" data-dir="left">◀</button>
+      <button class="dpad-btn" data-dir="down">▼</button>
+      <button class="dpad-btn" data-dir="right">▶</button>
+    </div>
+  </div>
+  <div id="action-buttons">
+    <button class="action-btn" id="btn-ammo">弹药</button>
+  </div>
+</div>
 <script>
 // ============================================================
 //  愤怒小鸟 - 神射手  (Angry Birds - Top-Down Shooter)
@@ -909,6 +1014,112 @@ canvas.addEventListener('touchend', e => {
   mouseDown = false;
   if (G.state === 'playing' && G.aiming) fireBird();
 }, { passive: false });
+
+// ============================================================
+//  MOBILE VIRTUAL CONTROLS (D-pad + action buttons)
+// ============================================================
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+if (isTouchDevice) {
+  const mobileControls = document.getElementById('mobile-controls');
+  mobileControls.classList.add('active');
+
+  // D-pad direction → keys mapping
+  const dirKeyMap = {
+    up:    ['w', 'W', 'ArrowUp'],
+    down:  ['s', 'S', 'ArrowDown'],
+    left:  ['a', 'A', 'ArrowLeft'],
+    right: ['d', 'D', 'ArrowRight'],
+  };
+
+  function setKeysForDir(dir, pressed) {
+    const keyList = dirKeyMap[dir];
+    if (!keyList) return;
+    for (const k of keyList) keys[k] = pressed;
+  }
+
+  // Bind D-pad buttons
+  document.querySelectorAll('.dpad-btn').forEach(btn => {
+    const dir = btn.dataset.dir;
+    if (!dir) return;
+
+    const press = (e) => {
+      e.preventDefault();
+      btn.classList.add('active');
+      setKeysForDir(dir, true);
+    };
+    const release = (e) => {
+      e.preventDefault();
+      btn.classList.remove('active');
+      setKeysForDir(dir, false);
+    };
+
+    btn.addEventListener('touchstart', press, { passive: false });
+    btn.addEventListener('touchend', release, { passive: false });
+    btn.addEventListener('touchcancel', release, { passive: false });
+    // Mouse fallback (desktop testing / hybrid devices)
+    btn.addEventListener('mousedown', press);
+    btn.addEventListener('mouseup', release);
+    btn.addEventListener('mouseleave', release);
+  });
+
+  // Ammo switch button (same logic as Space key)
+  const ammoBtn = document.getElementById('btn-ammo');
+  function triggerAmmoAction() {
+    if (G.state !== 'playing') return;
+    initAudio();
+    // Try split first (for split bird in flight)
+    let splitTriggered = false;
+    for (const b of G.birds) {
+      if (b.alive && b.ammoIdx === 2 && !b.splitUsed && !b.isChild) {
+        splitBird(b);
+        splitTriggered = true;
+        break;
+      }
+    }
+    if (!splitTriggered) {
+      G.ammoIdx = (G.ammoIdx + 1) % AMMO_TYPES.length;
+    }
+  }
+
+  ammoBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    ammoBtn.classList.add('active');
+    triggerAmmoAction();
+  }, { passive: false });
+  ammoBtn.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    ammoBtn.classList.remove('active');
+  }, { passive: false });
+  ammoBtn.addEventListener('touchcancel', () => {
+    ammoBtn.classList.remove('active');
+  }, { passive: false });
+  // Mouse fallback
+  ammoBtn.addEventListener('mousedown', () => {
+    ammoBtn.classList.add('active');
+    triggerAmmoAction();
+  });
+  ammoBtn.addEventListener('mouseup', () => ammoBtn.classList.remove('active'));
+  ammoBtn.addEventListener('mouseleave', () => ammoBtn.classList.remove('active'));
+
+  // Update ammo button label dynamically based on available split bird
+  function updateAmmoBtnLabel() {
+    let hasSplitBird = false;
+    for (const b of G.birds) {
+      if (b.alive && b.ammoIdx === 2 && !b.splitUsed && !b.isChild) {
+        hasSplitBird = true;
+        break;
+      }
+    }
+    ammoBtn.textContent = hasSplitBird ? '分裂' : '弹药';
+  }
+  // Patch the game loop to update label
+  const origUpdate = update;
+  update = function() {
+    origUpdate();
+    if (isTouchDevice) updateAmmoBtnLabel();
+  };
+}
 
 // ============================================================
 //  GAME INIT / RESET
@@ -2507,7 +2718,8 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('WASD移动 | 鼠标拖拽弹弓射击 | 空格切换弹药', W / 2, H - 8);
+    const hintText = isTouchDevice ? '屏幕拖拽瞄准射击 | 方向键移动 | 弹药按钮切换' : 'WASD移动 | 鼠标拖拽弹弓射击 | 空格切换弹药';
+    ctx.fillText(hintText, W / 2, H - 8);
     ctx.textAlign = 'left';
   }
 
@@ -2628,7 +2840,14 @@ function drawMenu() {
 
   ctx.fillStyle = '#aaa';
   ctx.font = '14px sans-serif';
-  const instrs = [
+  const instrs = isTouchDevice ? [
+    '👆 触摸屏幕拖拽瞄准 → 松手射击',
+    '⬆⬇⬅➡ 方向按钮移动闪避',
+    '🔘 右下"弹药"切换类型（炸弹/冰冻/分裂）',
+    '💥 炸弹鸟：范围爆炸伤害',
+    '❄ 冰冻鸟：冻结敌人并伤害',
+    '✦ 分裂鸟：空中按"分裂"变成三只',
+  ] : [
     '🖱 鼠标拖拽弹弓 → 瞄准 + 力度 → 释放射击',
     '⌨ WASD 键移动闪避',
     '␣ 空格键切换弹药类型（炸弹/冰冻/分裂鸟）',
@@ -2919,5 +3138,6 @@ buildBackgroundCache();
 gameLoop();
 
 </script>
+</div>
 </body>
 </html>
